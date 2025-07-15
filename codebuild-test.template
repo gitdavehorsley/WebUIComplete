@@ -1,0 +1,248 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CodeBuild Test Template - Simplified version for testing build process'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: codebuild-test
+    Description: Project name used for resource naming
+    
+  Environment:
+    Type: String
+    Default: test
+    AllowedValues: [test, dev, staging, prod]
+    Description: Environment name
+    
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Existing VPC ID for deployment
+    
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Existing private subnet IDs (minimum 2)
+    
+  AllowedCidrBlocks:
+    Type: CommaDelimitedList
+    Default: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+    Description: CIDR blocks allowed to access resources
+
+Resources:
+  # ================================
+  # ECR Repositories
+  # ================================
+  TestRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${ProjectName}/test-app"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 5 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 5
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+
+  # ================================
+  # CodeBuild IAM Role
+  # ================================
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-codebuild-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:GetAuthorizationToken
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                Resource: !Sub "arn:aws:s3:::${CodeBuildArtifactBucket}/*"
+
+  # ================================
+  # S3 Bucket for CodeBuild Artifacts
+  # ================================
+  CodeBuildArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectName}-artifacts-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  # ================================
+  # CodeBuild Project
+  # ================================
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${ProjectName}-build"
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: S3
+        Location: !Ref CodeBuildArtifactBucket
+        Name: build-artifacts
+        Packaging: ZIP
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:4.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+          - Name: IMAGE_REPO_NAME
+            Value: !Sub "${ProjectName}/test-app"
+          - Name: IMAGE_TAG
+            Value: latest
+      Source:
+        Type: GITHUB
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - echo Logging in to Amazon ECR...
+                - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+                - REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
+                - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+                - IMAGE_TAG=${COMMIT_HASH:=latest}
+            build:
+              commands:
+                - echo Build started on `date`
+                - echo Building test Docker image...
+                - |
+                  cat > Dockerfile << 'EOF'
+                  FROM alpine:latest
+                  RUN apk add --no-cache curl
+                  WORKDIR /app
+                  RUN echo "Hello from test container!" > index.html
+                  EXPOSE 8080
+                  CMD ["sh", "-c", "while true; do echo 'Test container running...' && sleep 30; done"]
+                  EOF
+                - docker build -t $REPOSITORY_URI:latest .
+                - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:$IMAGE_TAG
+            post_build:
+              commands:
+                - echo Build completed on `date`
+                - echo Pushing the Docker image...
+                - docker push $REPOSITORY_URI:latest
+                - docker push $REPOSITORY_URI:$IMAGE_TAG
+                - echo Writing image definitions file...
+                - printf '{"ImageURI":"%s"}' $REPOSITORY_URI:$IMAGE_TAG > imageDefinitions.json
+          artifacts:
+            files:
+              - imageDefinitions.json
+              - appspec.yml
+              - taskdef.json
+            discard-paths: no
+      Cache:
+        Type: NO_CACHE
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: !Sub "/aws/codebuild/${ProjectName}"
+          StreamName: build-log
+
+  # ================================
+  # Security Groups
+  # ================================
+  CodeBuildSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${ProjectName}-codebuild-sg"
+      GroupDescription: Security group for CodeBuild VPC access
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+          Description: All outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-codebuild-sg"
+
+  # ================================
+  # CloudWatch Log Group
+  # ================================
+  CloudWatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/codebuild/${ProjectName}"
+      RetentionInDays: 7
+
+# ================================
+# Outputs
+# ================================
+Outputs:
+  CodeBuildProjectName:
+    Description: CodeBuild Project Name
+    Value: !Ref CodeBuildProject
+    Export:
+      Name: !Sub "${ProjectName}-codebuild-project"
+
+  TestRepositoryURI:
+    Description: Test ECR Repository URI
+    Value: !GetAtt TestRepository.RepositoryUri
+    Export:
+      Name: !Sub "${ProjectName}-test-repo"
+
+  ArtifactBucketName:
+    Description: S3 Bucket for CodeBuild Artifacts
+    Value: !Ref CodeBuildArtifactBucket
+    Export:
+      Name: !Sub "${ProjectName}-artifacts-bucket"
+
+  CodeBuildServiceRoleArn:
+    Description: CodeBuild Service Role ARN
+    Value: !GetAtt CodeBuildServiceRole.Arn
+    Export:
+      Name: !Sub "${ProjectName}-codebuild-role-arn" 
