@@ -447,8 +447,8 @@ Resources:
                   - ecr:BatchGetImage
                   - ecr:BatchCheckLayerAvailability
                 Resource: 
-                  - !GetAtt OpenWebUIRepository.RepositoryUri
-                  - !GetAtt BedrockGatewayRepository.RepositoryUri
+                  - !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${ProjectName}/open-webui"
+                  - !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${ProjectName}/bedrock-gateway"
 
   ECSTaskRole:
     Type: AWS::IAM::Role
