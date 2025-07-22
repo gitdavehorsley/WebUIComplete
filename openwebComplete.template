@@ -391,13 +391,14 @@ Resources:
 
   ALBListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
-    DependsOn: 
-      - ApplicationLoadBalancer
-      - ALBTargetGroupWebUI
+    DependsOn: ApplicationLoadBalancer
     Properties:
       DefaultActions:
-        - Type: forward
-          TargetGroupArn: !Ref ALBTargetGroupWebUI
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: 404
+            ContentType: text/plain
+            MessageBody: "Not Found"
       LoadBalancerArn: !Ref ApplicationLoadBalancer
       Port: !If [HasCertificate, 443, 80]
       Protocol: !If [HasCertificate, HTTPS, HTTP]
@@ -407,7 +408,23 @@ Resources:
           - CertificateArn: !Ref CertificateArn
           - !Ref AWS::NoValue
 
-  ALBListenerRule:
+  ALBListenerRuleWebUI:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    DependsOn: 
+      - ALBListener
+      - ALBTargetGroupWebUI
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroupWebUI
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - "/*"
+      ListenerArn: !Ref ALBListener
+      Priority: 100
+
+  ALBListenerRuleGateway:
     Type: AWS::ElasticLoadBalancingV2::ListenerRule
     DependsOn: 
       - ALBListener
@@ -421,7 +438,7 @@ Resources:
           Values:
             - "/api/v1/*"
       ListenerArn: !Ref ALBListener
-      Priority: 100
+      Priority: 200
 
   # ================================
   # ECS Cluster and IAM Roles
@@ -588,7 +605,8 @@ Resources:
   ECSService:
     Type: AWS::ECS::Service
     DependsOn: 
-      - ALBListenerRule
+      - ALBListenerRuleWebUI
+      - ALBListenerRuleGateway
       - ECSTaskDefinition
     Properties:
       ServiceName: !Sub "${ProjectName}-service"
