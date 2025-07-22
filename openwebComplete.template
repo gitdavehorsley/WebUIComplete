@@ -327,8 +327,8 @@ Resources:
         - IpProtocol: tcp
           FromPort: 2049
           ToPort: 2049
-          DestinationSecurityGroupId: !Ref EFSSecurityGroup
-          Description: EFS access
+          CidrIp: 10.0.0.0/8
+          Description: EFS access to internal networks
       Tags:
         - Key: Name
           Value: !Sub "${ProjectName}-ecs-sg"
@@ -343,8 +343,8 @@ Resources:
         - IpProtocol: tcp
           FromPort: 2049
           ToPort: 2049
-          SourceSecurityGroupId: !Ref ECSSecurityGroup
-          Description: NFS from ECS tasks
+          CidrIp: 10.0.0.0/8
+          Description: NFS from internal networks
       Tags:
         - Key: Name
           Value: !Sub "${ProjectName}-efs-sg"
