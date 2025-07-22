@@ -9,15 +9,21 @@ I've significantly simplified the dependency structure to eliminate circular dep
 ### **1. Security Group Circular Dependency Break**
 **Problem:** ALB Security Group → ECS Security Group → EFS Security Group circular reference
 
-**Solution:** Replaced security group references with CIDR-based rules
+**Solution:** Replaced all security group references with CIDR-based rules
 ```yaml
 # BEFORE (Circular):
 ECSSecurityGroup:
   SecurityGroupIngress:
     - SourceSecurityGroupId: !Ref ALBSecurityGroup  # Circular reference
+EFSSecurityGroup:
+  SecurityGroupIngress:
+    - SourceSecurityGroupId: !Ref ECSSecurityGroup  # Circular reference
 
 # AFTER (Clean):
 ECSSecurityGroup:
+  SecurityGroupIngress:
+    - CidrIp: 10.0.0.0/8  # Internal network access
+EFSSecurityGroup:
   SecurityGroupIngress:
     - CidrIp: 10.0.0.0/8  # Internal network access
 ```
@@ -75,7 +81,7 @@ ALBListenerRule:
 ### **Security Group Rules:**
 - **ALB Security Group:** Allows HTTP/HTTPS from internal networks (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
 - **ECS Security Group:** Allows traffic from internal networks (10.0.0.0/8) to ports 8080 and 8000
-- **EFS Security Group:** Allows NFS (port 2049) from ECS security group
+- **EFS Security Group:** Allows NFS (port 2049) from internal networks (10.0.0.0/8)
 - **CodeBuild Security Group:** Allows outbound traffic for builds
 
 ### **Network Security:**
