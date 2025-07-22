@@ -228,6 +228,7 @@ Resources:
 
   EFSMountTarget1:
     Type: AWS::EFS::MountTarget
+    DependsOn: EFSSecurityGroup
     Properties:
       FileSystemId: !Ref EFSFileSystem
       SubnetId: !Select [0, !Ref PrivateSubnetIds]
@@ -236,6 +237,7 @@ Resources:
 
   EFSMountTarget2:
     Type: AWS::EFS::MountTarget
+    DependsOn: EFSSecurityGroup
     Properties:
       FileSystemId: !Ref EFSFileSystem
       SubnetId: !Select [1, !Ref PrivateSubnetIds]
@@ -354,6 +356,7 @@ Resources:
   # ================================
   ApplicationLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: ALBSecurityGroup
     Properties:
       Name: !Sub "${ProjectName}-internal-alb"
       Scheme: internal
@@ -367,6 +370,7 @@ Resources:
 
   ALBTargetGroupWebUI:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    DependsOn: ECSSecurityGroup
     Properties:
       Name: !Sub "${ProjectName}-webui-tg"
       Port: 8080
@@ -388,6 +392,7 @@ Resources:
 
   ALBTargetGroupGateway:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    DependsOn: ECSSecurityGroup
     Properties:
       Name: !Sub "${ProjectName}-gateway-tg"
       Port: 8000
@@ -407,6 +412,9 @@ Resources:
 
   ALBListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
+    DependsOn: 
+      - ApplicationLoadBalancer
+      - ALBTargetGroupWebUI
     Properties:
       DefaultActions:
         - Type: forward
@@ -422,6 +430,9 @@ Resources:
 
   ALBListenerRule:
     Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    DependsOn: 
+      - ALBListener
+      - ALBTargetGroupGateway
     Properties:
       Actions:
         - Type: forward
@@ -501,6 +512,10 @@ Resources:
   # ================================
   ECSTaskDefinition:
     Type: AWS::ECS::TaskDefinition
+    DependsOn: 
+      - ECSTaskExecutionRole
+      - ECSTaskRole
+      - EFSFileSystem
     Properties:
       Family: !Sub "${ProjectName}-task"
       NetworkMode: awsvpc
@@ -585,8 +600,9 @@ Resources:
   ECSService:
     Type: AWS::ECS::Service
     DependsOn: 
-      - ALBListener
+      - ALBListenerRule
       - ECSTaskDefinition
+      - ECSSecurityGroup
     Properties:
       ServiceName: !Sub "${ProjectName}-service"
       Cluster: !Ref ECSCluster
@@ -636,6 +652,7 @@ Resources:
 
   ServiceScalingPolicy:
     Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    DependsOn: ServiceScalingTarget
     Properties:
       PolicyName: !Sub "${ProjectName}-scaling-policy"
       PolicyType: TargetTrackingScaling

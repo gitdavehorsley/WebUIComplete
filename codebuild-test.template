@@ -122,6 +122,9 @@ Resources:
   # ================================
   CodeBuildProject:
     Type: AWS::CodeBuild::Project
+    DependsOn: 
+      - CodeBuildServiceRole
+      - CodeBuildSecurityGroup
     Properties:
       Name: !Sub "${ProjectName}-build"
       ServiceRole: !GetAtt CodeBuildServiceRole.Arn
