@@ -391,7 +391,9 @@ Resources:
 
   ALBListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
-    DependsOn: ApplicationLoadBalancer
+    DependsOn: 
+      - ApplicationLoadBalancer
+      - ALBTargetGroupWebUI
     Properties:
       DefaultActions:
         - Type: forward
@@ -407,7 +409,9 @@ Resources:
 
   ALBListenerRule:
     Type: AWS::ElasticLoadBalancingV2::ListenerRule
-    DependsOn: ALBListener
+    DependsOn: 
+      - ALBListener
+      - ALBTargetGroupGateway
     Properties:
       Actions:
         - Type: forward
@@ -584,8 +588,7 @@ Resources:
   ECSService:
     Type: AWS::ECS::Service
     DependsOn: 
-      - ALBTargetGroupWebUI
-      - ALBTargetGroupGateway
+      - ALBListenerRule
       - ECSTaskDefinition
     Properties:
       ServiceName: !Sub "${ProjectName}-service"
