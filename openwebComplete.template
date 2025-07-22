@@ -616,16 +616,18 @@ Resources:
   # ================================
   ServiceScalingTarget:
     Type: AWS::ApplicationAutoScaling::ScalableTarget
+    DependsOn: ECSService
     Properties:
       MaxCapacity: 10
       MinCapacity: 1
-      ResourceId: !Sub "service/${ECSCluster}/${ProjectName}-service"
+      ResourceId: !Sub "service/${ECSCluster}/${ECSService.Name}"
       RoleARN: !Sub "arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService"
       ScalableDimension: ecs:service:DesiredCount
       ServiceNamespace: ecs
 
   ServiceScalingPolicy:
     Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    DependsOn: ServiceScalingTarget
     Properties:
       PolicyName: !Sub "${ProjectName}-scaling-policy"
       PolicyType: TargetTrackingScaling
