@@ -24,7 +24,7 @@ Parameters:
   AllowedCidrBlocks:
     Type: CommaDelimitedList
     Default: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
-    Description: CIDR blocks allowed to access the internal load balancer
+    Description: CIDR blocks for future external access control (currently using VpcCidr)
     
   InternalNetworkCidr:
     Type: String
@@ -265,41 +265,15 @@ Resources:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          CidrIp: !Select [0, !Ref AllowedCidrBlocks]
-          Description: HTTP access from internal networks
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: !Select [1, !Ref AllowedCidrBlocks]
-          Description: HTTP access from internal networks
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: !Select [2, !Ref AllowedCidrBlocks]
-          Description: HTTP access from internal networks
+          CidrIp: !Ref VpcCidr
+          Description: HTTP access from VPC networks
         - !If
           - HasCertificate
           - IpProtocol: tcp
             FromPort: 443
             ToPort: 443
-            CidrIp: !Select [0, !Ref AllowedCidrBlocks]
-            Description: HTTPS access from internal networks
-          - !Ref AWS::NoValue
-        - !If
-          - HasCertificate
-          - IpProtocol: tcp
-            FromPort: 443
-            ToPort: 443
-            CidrIp: !Select [1, !Ref AllowedCidrBlocks]
-            Description: HTTPS access from internal networks
-          - !Ref AWS::NoValue
-        - !If
-          - HasCertificate
-          - IpProtocol: tcp
-            FromPort: 443
-            ToPort: 443
-            CidrIp: !Select [2, !Ref AllowedCidrBlocks]
-            Description: HTTPS access from internal networks
+            CidrIp: !Ref VpcCidr
+            Description: HTTPS access from VPC networks
           - !Ref AWS::NoValue
       Tags:
         - Key: Name
