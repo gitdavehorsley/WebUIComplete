@@ -508,6 +508,16 @@ Resources:
                 Resource: !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-*"
 
   # ================================
+  # CloudWatch Log Group
+  # ================================
+  CloudWatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    DependsOn: ECSCluster
+    Properties:
+      LogGroupName: !Sub "/ecs/${ProjectName}"
+      RetentionInDays: 30
+
+  # ================================
   # ECS Task Definition
   # ================================
   ECSTaskDefinition:
@@ -516,6 +526,7 @@ Resources:
       - ECSTaskExecutionRole
       - ECSTaskRole
       - EFSFileSystem
+      - CloudWatchLogGroup
     Properties:
       Family: !Sub "${ProjectName}-task"
       NetworkMode: awsvpc
@@ -600,7 +611,8 @@ Resources:
   ECSService:
     Type: AWS::ECS::Service
     DependsOn: 
-      - ALBListenerRule
+      - ALBTargetGroupWebUI
+      - ALBTargetGroupGateway
       - ECSTaskDefinition
       - ECSSecurityGroup
     Properties:
@@ -628,15 +640,6 @@ Resources:
           Value: !Sub "${ProjectName}-service"
 
   # ================================
-  # CloudWatch Log Group
-  # ================================
-  CloudWatchLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/ecs/${ProjectName}"
-      RetentionInDays: 30
-
-  # ================================
   # Auto Scaling
   # ================================
   ServiceScalingTarget:
@@ -645,7 +648,7 @@ Resources:
     Properties:
       MaxCapacity: 10
       MinCapacity: 1
-      ResourceId: !Sub "service/${ECSCluster}/${ECSService.Name}"
+      ResourceId: !Sub "service/${ECSCluster}/${ProjectName}-service"
       RoleARN: !Sub "arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService"
       ScalableDimension: ecs:service:DesiredCount
       ServiceNamespace: ecs
