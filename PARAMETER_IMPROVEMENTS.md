@@ -27,7 +27,7 @@ VpcCidr:
 AllowedCidrBlocks:
   Type: CommaDelimitedList
   Default: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
-  Description: CIDR blocks allowed to access the internal load balancer
+  Description: CIDR blocks for future external access control (currently using VpcCidr)
 ```
 
 ## 📋 **Security Group Updates**
@@ -90,7 +90,7 @@ SecurityGroupEgress:
 | **ECS Security Group** | Ingress (8000) | `!Ref VpcCidr` | Gateway access from VPC |
 | **ECS Security Group** | Egress (2049) | `!Ref VpcCidr` | EFS access to VPC |
 | **EFS Security Group** | Ingress (2049) | `!Ref VpcCidr` | NFS access from VPC |
-| **ALB Security Group** | Ingress (80/443) | `!Ref AllowedCidrBlocks` | External access control |
+| **ALB Security Group** | Ingress (80/443) | `!Ref VpcCidr` | VPC access control |
 
 ## 🚀 **Deployment Examples**
 
@@ -132,9 +132,9 @@ aws cloudformation deploy \
 ## 🛡️ **Security Considerations**
 
 ### **Network Isolation:**
-- **VPC CIDR:** Controls access within the VPC
-- **Internal Network CIDR:** Controls access from internal networks
-- **Allowed CIDR Blocks:** Controls external access to ALB
+- **VPC CIDR:** Controls access within the VPC (used by all security groups)
+- **Internal Network CIDR:** Controls access from internal networks (reserved for future use)
+- **Allowed CIDR Blocks:** Reserved for future external access control
 
 ### **Best Practices:**
 - **Use Specific CIDRs:** Avoid overly broad CIDR blocks
