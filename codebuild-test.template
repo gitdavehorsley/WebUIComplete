@@ -25,6 +25,16 @@ Parameters:
     Type: CommaDelimitedList
     Default: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
     Description: CIDR blocks allowed to access resources
+    
+  InternalNetworkCidr:
+    Type: String
+    Default: "10.0.0.0/8"
+    Description: Primary internal network CIDR for security group rules
+    
+  VpcCidr:
+    Type: String
+    Default: "10.0.0.0/8"
+    Description: VPC CIDR block for internal network access
 
 Resources:
   # ================================

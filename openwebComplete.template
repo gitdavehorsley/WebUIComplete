@@ -26,6 +26,16 @@ Parameters:
     Default: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
     Description: CIDR blocks allowed to access the internal load balancer
     
+  InternalNetworkCidr:
+    Type: String
+    Default: "10.0.0.0/8"
+    Description: Primary internal network CIDR for security group rules
+    
+  VpcCidr:
+    Type: String
+    Default: "10.0.0.0/8"
+    Description: VPC CIDR block for internal network access
+    
   CertificateArn:
     Type: String
     Default: ""
@@ -305,13 +315,13 @@ Resources:
         - IpProtocol: tcp
           FromPort: 8080
           ToPort: 8080
-          CidrIp: 10.0.0.0/8
-          Description: Open WebUI from internal networks
+          CidrIp: !Ref VpcCidr
+          Description: Open WebUI from VPC networks
         - IpProtocol: tcp
           FromPort: 8000
           ToPort: 8000
-          CidrIp: 10.0.0.0/8
-          Description: Bedrock Gateway from internal networks
+          CidrIp: !Ref VpcCidr
+          Description: Bedrock Gateway from VPC networks
       SecurityGroupEgress:
         # REPLACE the broad rule with specific ones:
         - IpProtocol: tcp
@@ -327,8 +337,8 @@ Resources:
         - IpProtocol: tcp
           FromPort: 2049
           ToPort: 2049
-          CidrIp: 10.0.0.0/8
-          Description: EFS access to internal networks
+          CidrIp: !Ref VpcCidr
+          Description: EFS access to VPC networks
       Tags:
         - Key: Name
           Value: !Sub "${ProjectName}-ecs-sg"
@@ -343,8 +353,8 @@ Resources:
         - IpProtocol: tcp
           FromPort: 2049
           ToPort: 2049
-          CidrIp: 10.0.0.0/8
-          Description: NFS from internal networks
+          CidrIp: !Ref VpcCidr
+          Description: NFS from VPC networks
       Tags:
         - Key: Name
           Value: !Sub "${ProjectName}-efs-sg"
