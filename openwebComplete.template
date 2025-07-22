@@ -312,12 +312,6 @@ Resources:
           ToPort: 8000
           SourceSecurityGroupId: !Ref ALBSecurityGroup
           Description: Bedrock Gateway from ALB
-        # ADD: Self-referencing rule for container communication
-        - IpProtocol: tcp
-          FromPort: 8000
-          ToPort: 8000
-          SourceSecurityGroupId: !Ref ECSSecurityGroup
-          Description: WebUI to Gateway communication
       SecurityGroupEgress:
         # REPLACE the broad rule with specific ones:
         - IpProtocol: tcp
@@ -590,7 +584,9 @@ Resources:
   # ================================
   ECSService:
     Type: AWS::ECS::Service
-    DependsOn: ALBListener
+    DependsOn: 
+      - ALBListener
+      - ECSTaskDefinition
     Properties:
       ServiceName: !Sub "${ProjectName}-service"
       Cluster: !Ref ECSCluster
@@ -629,6 +625,7 @@ Resources:
   # ================================
   ServiceScalingTarget:
     Type: AWS::ApplicationAutoScaling::ScalableTarget
+    DependsOn: ECSService
     Properties:
       MaxCapacity: 10
       MinCapacity: 1

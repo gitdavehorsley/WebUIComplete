@@ -46,11 +46,11 @@ RuntimePlatform:
 ### 5. **ECS Security Group - Enhanced Configuration**
 **File:** `openwebComplete.template`
 **Changes:**
-- **Added self-referencing rule** for container-to-container communication
 - **Replaced broad egress rule** with specific rules:
   - HTTPS (443) for AWS APIs and Bedrock
   - HTTP (80) for package downloads
   - NFS (2049) for EFS access
+- **Note:** Self-referencing rule removed to prevent circular dependencies
 
 ## ✅ **CodeBuild Template Improvements**
 
