@@ -228,7 +228,6 @@ Resources:
 
   EFSMountTarget1:
     Type: AWS::EFS::MountTarget
-    DependsOn: EFSSecurityGroup
     Properties:
       FileSystemId: !Ref EFSFileSystem
       SubnetId: !Select [0, !Ref PrivateSubnetIds]
@@ -237,7 +236,6 @@ Resources:
 
   EFSMountTarget2:
     Type: AWS::EFS::MountTarget
-    DependsOn: EFSSecurityGroup
     Properties:
       FileSystemId: !Ref EFSFileSystem
       SubnetId: !Select [1, !Ref PrivateSubnetIds]
@@ -307,13 +305,13 @@ Resources:
         - IpProtocol: tcp
           FromPort: 8080
           ToPort: 8080
-          SourceSecurityGroupId: !Ref ALBSecurityGroup
-          Description: Open WebUI from ALB
+          CidrIp: 10.0.0.0/8
+          Description: Open WebUI from internal networks
         - IpProtocol: tcp
           FromPort: 8000
           ToPort: 8000
-          SourceSecurityGroupId: !Ref ALBSecurityGroup
-          Description: Bedrock Gateway from ALB
+          CidrIp: 10.0.0.0/8
+          Description: Bedrock Gateway from internal networks
       SecurityGroupEgress:
         # REPLACE the broad rule with specific ones:
         - IpProtocol: tcp
@@ -356,7 +354,6 @@ Resources:
   # ================================
   ApplicationLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-    DependsOn: ALBSecurityGroup
     Properties:
       Name: !Sub "${ProjectName}-internal-alb"
       Scheme: internal
@@ -370,7 +367,6 @@ Resources:
 
   ALBTargetGroupWebUI:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
-    DependsOn: ECSSecurityGroup
     Properties:
       Name: !Sub "${ProjectName}-webui-tg"
       Port: 8080
@@ -392,7 +388,6 @@ Resources:
 
   ALBTargetGroupGateway:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
-    DependsOn: ECSSecurityGroup
     Properties:
       Name: !Sub "${ProjectName}-gateway-tg"
       Port: 8000
@@ -412,9 +407,7 @@ Resources:
 
   ALBListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
-    DependsOn: 
-      - ApplicationLoadBalancer
-      - ALBTargetGroupWebUI
+    DependsOn: ApplicationLoadBalancer
     Properties:
       DefaultActions:
         - Type: forward
@@ -430,9 +423,7 @@ Resources:
 
   ALBListenerRule:
     Type: AWS::ElasticLoadBalancingV2::ListenerRule
-    DependsOn: 
-      - ALBListener
-      - ALBTargetGroupGateway
+    DependsOn: ALBListener
     Properties:
       Actions:
         - Type: forward
@@ -512,7 +503,6 @@ Resources:
   # ================================
   CloudWatchLogGroup:
     Type: AWS::Logs::LogGroup
-    DependsOn: ECSCluster
     Properties:
       LogGroupName: !Sub "/ecs/${ProjectName}"
       RetentionInDays: 30
@@ -526,7 +516,6 @@ Resources:
       - ECSTaskExecutionRole
       - ECSTaskRole
       - EFSFileSystem
-      - CloudWatchLogGroup
     Properties:
       Family: !Sub "${ProjectName}-task"
       NetworkMode: awsvpc
@@ -614,7 +603,6 @@ Resources:
       - ALBTargetGroupWebUI
       - ALBTargetGroupGateway
       - ECSTaskDefinition
-      - ECSSecurityGroup
     Properties:
       ServiceName: !Sub "${ProjectName}-service"
       Cluster: !Ref ECSCluster
@@ -644,7 +632,6 @@ Resources:
   # ================================
   ServiceScalingTarget:
     Type: AWS::ApplicationAutoScaling::ScalableTarget
-    DependsOn: ECSService
     Properties:
       MaxCapacity: 10
       MinCapacity: 1
@@ -655,7 +642,6 @@ Resources:
 
   ServiceScalingPolicy:
     Type: AWS::ApplicationAutoScaling::ScalingPolicy
-    DependsOn: ServiceScalingTarget
     Properties:
       PolicyName: !Sub "${ProjectName}-scaling-policy"
       PolicyType: TargetTrackingScaling
