@@ -144,6 +144,12 @@ Resources:
             Value: !Sub "${ProjectName}/test-app"
           - Name: IMAGE_TAG
             Value: latest
+      # ADD VPC CONFIGURATION
+      VpcConfig:
+        VpcId: !Ref VpcId
+        Subnets: !Ref PrivateSubnetIds
+        SecurityGroupIds:
+          - !Ref CodeBuildSecurityGroup
       Source:
         Type: GITHUB
         BuildSpec: |
@@ -156,6 +162,12 @@ Resources:
                 - REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
                 - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
                 - IMAGE_TAG=${COMMIT_HASH:=latest}
+                # ADD BETTER ERROR HANDLING
+                - |
+                  if ! aws ecr describe-repositories --repository-names $IMAGE_REPO_NAME 2>/dev/null; then
+                    echo "Repository not found, creating..."
+                    aws ecr create-repository --repository-name $IMAGE_REPO_NAME
+                  fi
             build:
               commands:
                 - echo Build started on `date`

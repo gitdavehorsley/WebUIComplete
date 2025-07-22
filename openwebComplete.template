@@ -177,6 +177,17 @@ Resources:
                 - REPOSITORY_URI_GATEWAY=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME_GATEWAY
                 - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
                 - IMAGE_TAG=${COMMIT_HASH:=latest}
+                # ADD BETTER ERROR HANDLING
+                - |
+                  if ! aws ecr describe-repositories --repository-names $IMAGE_REPO_NAME_WEBUI 2>/dev/null; then
+                    echo "WebUI repository not found, creating..."
+                    aws ecr create-repository --repository-name $IMAGE_REPO_NAME_WEBUI
+                  fi
+                - |
+                  if ! aws ecr describe-repositories --repository-names $IMAGE_REPO_NAME_GATEWAY 2>/dev/null; then
+                    echo "Gateway repository not found, creating..."
+                    aws ecr create-repository --repository-name $IMAGE_REPO_NAME_GATEWAY
+                  fi
             build:
               commands:
                 - echo Build started on `date`
@@ -301,10 +312,29 @@ Resources:
           ToPort: 8000
           SourceSecurityGroupId: !Ref ALBSecurityGroup
           Description: Bedrock Gateway from ALB
+        # ADD: Self-referencing rule for container communication
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          SourceSecurityGroupId: !Ref ECSSecurityGroup
+          Description: WebUI to Gateway communication
       SecurityGroupEgress:
-        - IpProtocol: "-1"
+        # REPLACE the broad rule with specific ones:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
           CidrIp: 0.0.0.0/0
-          Description: All outbound traffic for AWS API calls
+          Description: HTTPS for AWS APIs and Bedrock
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP for package downloads
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          DestinationSecurityGroupId: !Ref EFSSecurityGroup
+          Description: EFS access
       Tags:
         - Key: Name
           Value: !Sub "${ProjectName}-ecs-sg"
@@ -350,14 +380,14 @@ Resources:
       VpcId: !Ref VpcId
       TargetType: ip
       HealthCheckEnabled: true
-      HealthCheckPath: /health
+      HealthCheckPath: /
       HealthCheckProtocol: HTTP
-      HealthCheckIntervalSeconds: 30
-      HealthCheckTimeoutSeconds: 5
+      HealthCheckIntervalSeconds: 15  # Faster detection
+      HealthCheckTimeoutSeconds: 10   # More generous timeout
       HealthyThresholdCount: 2
       UnhealthyThresholdCount: 3
       Matcher:
-        HttpCode: 200,404
+        HttpCode: 200,302,404  # Add 302 for redirects
       Tags:
         - Key: Name
           Value: !Sub "${ProjectName}-webui-tg"
@@ -482,8 +512,13 @@ Resources:
       NetworkMode: awsvpc
       RequiresCompatibilities:
         - FARGATE
-      Cpu: 1024
-      Memory: 2048
+      # ADD CRITICAL RUNTIME PLATFORM SPECIFICATION
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      # UPDATE RESOURCE ALLOCATIONS
+      Cpu: 2048          # CHANGE: 2 vCPUs (was 1024)
+      Memory: 5120       # CHANGE: 5GB RAM total (was 2048)
       ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
       TaskRoleArn: !GetAtt ECSTaskRole.Arn
       ContainerDefinitions:
@@ -493,6 +528,10 @@ Resources:
           PortMappings:
             - ContainerPort: 8080
               Protocol: tcp
+          # UPDATE RESOURCE RESERVATIONS
+          Memory: 4096      # Reserve 4GB for WebUI (as requested)
+          MemoryReservation: 3072  # Soft limit at 3GB
+          Cpu: 1536        # Reserve ~1.5 vCPUs for WebUI
           Environment:
             - Name: OPENAI_API_BASE_URL
               Value: http://localhost:8000/api/v1
@@ -502,6 +541,13 @@ Resources:
               Value: "true"
             - Name: ENABLE_SIGNUP
               Value: "false"
+            # ADD ENHANCED ENVIRONMENT VARIABLES
+            - Name: WEBUI_NAME
+              Value: "AWS Bedrock WebUI"
+            - Name: DEFAULT_MODELS
+              Value: "anthropic.claude-3-sonnet-20240229-v1:0"
+            - Name: WEBUI_SECRET_KEY
+              Value: !Sub "${ProjectName}-secret-key"
           MountPoints:
             - SourceVolume: webui-data
               ContainerPath: /app/backend/data
@@ -517,6 +563,10 @@ Resources:
           PortMappings:
             - ContainerPort: 8000
               Protocol: tcp
+          # UPDATE RESOURCE RESERVATIONS
+          Memory: 1024      # Reserve 1GB for Gateway (remaining memory)
+          MemoryReservation: 512   # Soft limit
+          Cpu: 512         # Reserve ~0.5 vCPUs for Gateway
           Environment:
             - Name: AWS_REGION
               Value: !Ref AWS::Region
