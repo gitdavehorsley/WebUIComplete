@@ -211,7 +211,7 @@ Resources:
       HealthyThresholdCount: 2
       UnhealthyThresholdCount: 3
       Matcher:
-        HttpCode: 200,302,404  # Add 302 for redirects
+        HttpCode: "200,302,404"  # Add 302 for redirects
       Tags:
         - Key: Name
           Value: !Sub "${ProjectName}-webui-tg"
