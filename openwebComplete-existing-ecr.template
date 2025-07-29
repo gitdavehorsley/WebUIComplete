@@ -10,7 +10,11 @@ Parameters:
   Environment:
     Type: String
     Default: poc
-    AllowedValues: [poc, dev, staging, prod]
+    AllowedValues: 
+      - poc
+      - dev
+      - staging
+      - prod
     Description: Environment name
     
   VpcId:
