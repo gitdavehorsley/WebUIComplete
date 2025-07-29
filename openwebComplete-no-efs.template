@@ -176,12 +176,12 @@ Resources:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
       Name: !Sub "${ProjectName}-gateway-tg"
-      Port: 8000
+      Port: 80
       Protocol: HTTP
       VpcId: !Ref VpcId
       TargetType: ip
       HealthCheckEnabled: true
-      HealthCheckPath: /api/v1/models
+      HealthCheckPath: /health
       HealthCheckProtocol: HTTP
       HealthCheckIntervalSeconds: 30
       HealthCheckTimeoutSeconds: 15
@@ -397,7 +397,7 @@ Resources:
           Image: !Sub "${BedrockGatewayRepositoryURI}:${BedrockGatewayImageTag}"
           Essential: true
           PortMappings:
-            - ContainerPort: 8000
+            - ContainerPort: 80
               Protocol: tcp
           Memory: 1024
           MemoryReservation: 512
@@ -464,7 +464,7 @@ Resources:
           AssignPublicIp: DISABLED
       LoadBalancers:
         - ContainerName: bedrock-gateway
-          ContainerPort: 8000
+          ContainerPort: 80
           TargetGroupArn: !Ref ALBTargetGroupGateway
       HealthCheckGracePeriodSeconds: 120
       Tags:
