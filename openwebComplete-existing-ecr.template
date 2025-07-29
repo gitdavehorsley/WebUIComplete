@@ -373,7 +373,7 @@ Resources:
       RuntimePlatform:
         CpuArchitecture: X86_64
         OperatingSystemFamily: LINUX
-      Cpu: 1024          # 1 vCPU for WebUI
+      Cpu: 2048          # 2 vCPU for WebUI
       Memory: 4096       # 4GB RAM for WebUI
       ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
       TaskRoleArn: !GetAtt ECSTaskRole.Arn
@@ -386,7 +386,7 @@ Resources:
               Protocol: tcp
           Memory: 4096
           MemoryReservation: 3072
-          Cpu: 1024
+          Cpu: 2048
           Environment:
             - Name: OPENAI_API_BASE_URL
               Value: !Sub "http://${ApplicationLoadBalancer.DNSName}/api/v1"
