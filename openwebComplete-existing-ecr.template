@@ -415,10 +415,10 @@ Resources:
             Command:
               - CMD-SHELL
               - curl -f http://localhost:8080/ || exit 1
-            Interval: 30
-            Timeout: 5
-            Retries: 3
-            StartPeriod: 60
+            Interval: "30"
+            Timeout: "5"
+            Retries: "3"
+            StartPeriod: "60"
       Volumes:
         - Name: webui-data
           EFSVolumeConfiguration:
@@ -468,10 +468,10 @@ Resources:
             Command:
               - CMD-SHELL
               - curl -f http://localhost:8000/health || exit 1
-            Interval: 30
-            Timeout: 5
-            Retries: 3
-            StartPeriod: 60
+            Interval: "30"
+            Timeout: "5"
+            Retries: "3"
+            StartPeriod: "60"
 
   # ================================
   # ECS Services (Separate)
