@@ -468,6 +468,8 @@ Resources:
               Value: !Ref AWS::Region
             - Name: LOG_LEVEL
               Value: INFO
+            - Name: CORS_ALLOW_ORIGIN
+              Value: "*"  # For web UI access
           LogConfiguration:
             LogDriver: awslogs
             Options:
