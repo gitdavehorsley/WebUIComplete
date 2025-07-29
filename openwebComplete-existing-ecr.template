@@ -65,6 +65,10 @@ Parameters:
     Type: String
     Default: latest
     Description: Image tag to use for Bedrock Gateway container
+    
+  ApiKeySecretArn:
+    Type: String
+    Description: ARN of the AWS Secrets Manager secret containing the API key for Bedrock access
 
 Conditions:
   HasCertificate: !Not [!Equals [!Ref CertificateArn, ""]]
@@ -328,6 +332,14 @@ Resources:
                   - ecr:BatchGetImage
                   - ecr:BatchCheckLayerAvailability
                 Resource: "*"  # Allow access to any ECR repository
+        - PolicyName: SecretsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref ApiKeySecretArn
 
   ECSTaskRole:
     Type: AWS::IAM::Role
@@ -394,8 +406,6 @@ Resources:
           Environment:
             - Name: OPENAI_API_BASE_URL
               Value: !Sub "http://${ApplicationLoadBalancer.DNSName}/api/v1"
-            - Name: OPENAI_API_KEY
-              Value: bedrock
             - Name: WEBUI_AUTH
               Value: "true"
             - Name: ENABLE_SIGNUP
@@ -406,6 +416,9 @@ Resources:
               Value: "anthropic.claude-3-sonnet-20240229-v1:0"
             - Name: WEBUI_SECRET_KEY
               Value: !Sub "${ProjectName}-secret-key"
+          Secrets:
+            - Name: OPENAI_API_KEY
+              ValueFrom: !Ref ApiKeySecretArn
           MountPoints:
             - SourceVolume: webui-data
               ContainerPath: /app/backend/data
