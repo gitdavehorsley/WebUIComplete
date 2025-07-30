@@ -116,8 +116,8 @@ Resources:
           CidrIp: !Ref VpcCidr
           Description: Open WebUI from VPC networks
         - IpProtocol: tcp
-          FromPort: 8000
-          ToPort: 8000
+          FromPort: 80
+          ToPort: 80
           CidrIp: !Ref VpcCidr
           Description: Bedrock Gateway from VPC networks
       SecurityGroupEgress:
@@ -358,7 +358,7 @@ Resources:
             - Name: WEBUI_AUTH
               Value: "true"
             - Name: ENABLE_SIGNUP
-              Value: "true"
+              Value: "false"
             - Name: WEBUI_NAME
               Value: "AWS Bedrock WebUI"
             - Name: DEFAULT_MODELS
