@@ -358,7 +358,9 @@ Resources:
             - Name: WEBUI_AUTH
               Value: "true"
             - Name: ENABLE_SIGNUP
-              Value: "false"
+              Value: "true"
+            - Name: ENABLE_OPENAI_API
+              Value: "true"
             - Name: WEBUI_NAME
               Value: "AWS Bedrock WebUI"
             - Name: DEFAULT_MODELS
