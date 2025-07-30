@@ -69,6 +69,11 @@ Parameters:
   ApiKeySecretArn:
     Type: String
     Description: ARN of the AWS Secrets Manager secret containing the API key for Bedrock access
+    
+  DefaultModelId:
+    Type: String
+    Default: anthropic.claude-3-sonnet-20240229-v1:0
+    Description: The default model ID, please make sure the model ID is supported in the current region
 
 Conditions:
   HasCertificate: !Not [!Equals [!Ref CertificateArn, ""]]
@@ -364,7 +369,7 @@ Resources:
             - Name: WEBUI_NAME
               Value: "AWS Bedrock WebUI"
             - Name: DEFAULT_MODELS
-              Value: "anthropic.claude-3-sonnet-20240229-v1:0"
+              Value: !Ref DefaultModelId
             - Name: WEBUI_SECRET_KEY
               Value: !Sub "${ProjectName}-secret-key"
           Secrets:
@@ -388,7 +393,7 @@ Resources:
       RequiresCompatibilities:
         - FARGATE
       RuntimePlatform:
-        CpuArchitecture: X86_64
+        CpuArchitecture: ARM64
         OperatingSystemFamily: LINUX
       Cpu: 512
       Memory: 1024
