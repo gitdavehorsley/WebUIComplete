@@ -395,8 +395,8 @@ Resources:
       RuntimePlatform:
         CpuArchitecture: ARM64
         OperatingSystemFamily: LINUX
-      Cpu: 512
-      Memory: 1024
+      Cpu: 1024
+      Memory: 2048
       ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
       TaskRoleArn: !GetAtt ECSTaskRole.Arn
       ContainerDefinitions:
@@ -406,9 +406,9 @@ Resources:
           PortMappings:
             - ContainerPort: 80
               Protocol: tcp
-          Memory: 1024
-          MemoryReservation: 512
-          Cpu: 512
+          Memory: 2048
+          MemoryReservation: 1536
+          Cpu: 1024
           Environment:
             - Name: AWS_REGION
               Value: !Ref AWS::Region
