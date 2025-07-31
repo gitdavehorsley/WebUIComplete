@@ -121,8 +121,8 @@ Resources:
           CidrIp: !Ref VpcCidr
           Description: Open WebUI from VPC networks
         - IpProtocol: tcp
-          FromPort: 8000
-          ToPort: 8000
+          FromPort: 80
+          ToPort: 80
           CidrIp: !Ref VpcCidr
           Description: Bedrock Gateway from VPC networks
       SecurityGroupEgress:
@@ -181,7 +181,7 @@ Resources:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
       Name: !Sub "${ProjectName}-gateway-tg"
-      Port: 8000
+      Port: 80
       Protocol: HTTP
       VpcId: !Ref VpcId
       TargetType: ip
@@ -404,7 +404,7 @@ Resources:
           Image: !Sub "${BedrockGatewayRepositoryURI}:${BedrockGatewayImageTag}"
           Essential: true
           PortMappings:
-            - ContainerPort: 8000
+            - ContainerPort: 80
               Protocol: tcp
           Memory: 2048
           MemoryReservation: 1536
@@ -474,7 +474,7 @@ Resources:
           AssignPublicIp: DISABLED
       LoadBalancers:
         - ContainerName: bedrock-gateway
-          ContainerPort: 8000
+          ContainerPort: 80
           TargetGroupArn: !Ref ALBTargetGroupGateway
       HealthCheckGracePeriodSeconds: 120
       Tags:
