@@ -365,8 +365,6 @@ Resources:
           PortMappings:
             - ContainerPort: 8080
               Protocol: tcp
-          DnsServers:
-            - "169.254.169.253"
           Memory: 4096
           MemoryReservation: 3072
           Cpu: 2048
@@ -419,8 +417,6 @@ Resources:
           PortMappings:
             - ContainerPort: 80
               Protocol: tcp
-          DnsServers:
-            - "169.254.169.253"
           Memory: 2048
           MemoryReservation: 1536
           Cpu: 1024
