@@ -54,7 +54,8 @@ Parameters:
     
   BedrockGatewayRepositoryURI:
     Type: String
-    Description: Full URI of existing Bedrock Gateway ECR repository (e.g., 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-repo/bedrock-gateway)
+    Default: "366590864501.dkr.ecr.us-east-1.amazonaws.com/bedrock-proxy-api-ecs"
+    Description: Full URI of existing Bedrock Gateway ECR repository (defaults to official AWS sample image)
     
   OpenWebUIImageTag:
     Type: String
