@@ -316,7 +316,17 @@ Resources:
                 Action:
                   - bedrock:InvokeModel
                   - bedrock:InvokeModelWithResponseStream
-                Resource: !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-*"
+                  - bedrock:ListFoundationModels
+                  - bedrock:ListInferenceProfiles
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - "arn:aws:bedrock:*::foundation-model/*"
+                  - "arn:aws:bedrock:*:*:inference-profile/*"
+                  - "arn:aws:bedrock:*:*:application-inference-profile/*"
 
   # ================================
   # CloudWatch Log Group
@@ -374,7 +384,7 @@ Resources:
               Value: !Sub "${ProjectName}-secret-key"
           Secrets:
             - Name: OPENAI_API_KEY
-              ValueFrom: !Ref ApiKeySecretArn
+              ValueFrom: !Sub "${ApiKeySecretArn}:api_key::"
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -393,7 +403,7 @@ Resources:
       RequiresCompatibilities:
         - FARGATE
       RuntimePlatform:
-        CpuArchitecture: ARM64
+        CpuArchitecture: X86_64
         OperatingSystemFamily: LINUX
       Cpu: 1024
       Memory: 2048
@@ -416,9 +426,19 @@ Resources:
               Value: INFO
             - Name: CORS_ALLOW_ORIGIN
               Value: "*"
+            - Name: DEBUG
+              Value: "false"
+            - Name: DEFAULT_MODEL
+              Value: !Ref DefaultModelId
+            - Name: DEFAULT_EMBEDDING_MODEL
+              Value: cohere.embed-multilingual-v3
+            - Name: ENABLE_CROSS_REGION_INFERENCE
+              Value: "true"
+            - Name: ENABLE_APPLICATION_INFERENCE_PROFILES
+              Value: "true"
           Secrets:
             - Name: API_KEY
-              ValueFrom: !Ref ApiKeySecretArn
+              ValueFrom: !Sub "${ApiKeySecretArn}:api_key::"
           LogConfiguration:
             LogDriver: awslogs
             Options:
