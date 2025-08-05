@@ -158,6 +158,7 @@ Resources:
 
   EFSSecurityGroup:
     Type: AWS::EC2::SecurityGroup
+    DependsOn: ECSSecurityGroup
     Properties:
       GroupName: !Sub "${ProjectName}-efs-sg"
       GroupDescription: Security group for EFS file system
