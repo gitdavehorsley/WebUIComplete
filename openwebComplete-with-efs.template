@@ -231,48 +231,7 @@ Resources:
       SecurityGroups:
         - !Ref EFSSecurityGroup
 
-  # ================================
-  # EFS Access Points
-  # ================================
-  EFSWebUIAccessPoint:
-    Type: AWS::EFS::AccessPoint
-    DependsOn: EFSFileSystem
-    Properties:
-      FileSystemId: !Ref EFSFileSystem
-      Tags:
-        - Key: Name
-          Value: !Sub "${ProjectName}-webui-access-point"
-        - Key: Purpose
-          Value: "WebUI Data Storage"
-      PosixUser:
-        Uid: "1000"
-        Gid: "1000"
-      RootDirectory:
-        Path: "/webui"
-        CreationInfo:
-          OwnerUid: "1000"
-          OwnerGid: "1000"
-          Permissions: "755"
 
-  EFSGatewayAccessPoint:
-    Type: AWS::EFS::AccessPoint
-    DependsOn: EFSFileSystem
-    Properties:
-      FileSystemId: !Ref EFSFileSystem
-      Tags:
-        - Key: Name
-          Value: !Sub "${ProjectName}-gateway-access-point"
-        - Key: Purpose
-          Value: "Gateway Data Storage"
-      PosixUser:
-        Uid: "1000"
-        Gid: "1000"
-      RootDirectory:
-        Path: "/gateway"
-        CreationInfo:
-          OwnerUid: "1000"
-          OwnerGid: "1000"
-          Permissions: "755"
 
   # ================================
   # Application Load Balancer (Internal)
@@ -499,9 +458,6 @@ Resources:
             FileSystemId: !Ref EFSFileSystem
             TransitEncryption: ENABLED
             TransitEncryptionPort: 2049
-            AuthorizationConfig:
-              IAM: ENABLED
-              AccessPointId: !Ref EFSWebUIAccessPoint
       ContainerDefinitions:
         - Name: open-webui
           Image: !Sub "${OpenWebUIRepositoryURI}:${OpenWebUIImageTag}"
@@ -562,9 +518,6 @@ Resources:
             FileSystemId: !Ref EFSFileSystem
             TransitEncryption: ENABLED
             TransitEncryptionPort: 2049
-            AuthorizationConfig:
-              IAM: ENABLED
-              AccessPointId: !Ref EFSGatewayAccessPoint
       ContainerDefinitions:
         - Name: bedrock-gateway
           Image: !Sub "${BedrockGatewayRepositoryURI}:${BedrockGatewayImageTag}"
@@ -773,14 +726,4 @@ Outputs:
     Export:
       Name: !Sub "${ProjectName}-efs-dns-name"
 
-  EFSWebUIAccessPointId:
-    Description: EFS WebUI Access Point ID
-    Value: !Ref EFSWebUIAccessPoint
-    Export:
-      Name: !Sub "${ProjectName}-efs-webui-access-point"
-
-  EFSGatewayAccessPointId:
-    Description: EFS Gateway Access Point ID
-    Value: !Ref EFSGatewayAccessPoint
-    Export:
-      Name: !Sub "${ProjectName}-efs-gateway-access-point" 
+ 
