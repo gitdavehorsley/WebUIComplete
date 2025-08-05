@@ -1,0 +1,400 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CodeBuild project to copy AWS Samples Bedrock Access Gateway images (both x64 and ARM64) to private ECR repository'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: bedrock-gateway-multiarch
+    Description: Project name used for resource naming
+    
+  TargetECRRepositoryName:
+    Type: String
+    Default: bedrock-gateway
+    Description: Name of the target ECR repository in your account
+    
+  SourceImageTag:
+    Type: String
+    Default: latest
+    Description: Tag of the source image to copy
+    
+  TargetImageTag:
+    Type: String
+    Default: latest
+    Description: Tag for the copied image in your repository
+    
+  BuildComputeType:
+    Type: String
+    Default: BUILD_GENERAL1_LARGE
+    AllowedValues:
+      - BUILD_GENERAL1_MEDIUM
+      - BUILD_GENERAL1_LARGE
+      - BUILD_GENERAL1_2XLARGE
+    Description: CodeBuild compute type (Large or higher recommended for multi-arch)
+
+Resources:
+  # ================================
+  # ECR Repository (if it doesn't exist)
+  # ================================
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref TargetECRRepositoryName
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: '{"rules":[{"rulePriority":1,"description":"Keep last 20 images","selection":{"tagStatus":"tagged","tagPrefixList":["latest","v"],"countType":"imageCountMoreThan","countNumber":20},"action":{"type":"expire"}},{"rulePriority":2,"description":"Delete untagged images older than 1 day","selection":{"tagStatus":"untagged","countType":"sinceImagePushed","countUnit":"days","countNumber":1},"action":{"type":"expire"}}]}'
+  
+  # ================================
+  # CodeBuild IAM Role
+  # ================================
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-codebuild-service-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # CloudWatch Logs
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: 
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ProjectName}-*"
+              
+              # ECR Permissions for target repository
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:GetAuthorizationToken
+                Resource: "*"
+              
+              - Effect: Allow
+                Action:
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                Resource: !GetAtt ECRRepository.Arn
+              
+              # ECR Permissions for AWS Samples repository (cross-account)
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: 
+                  - !Sub "arn:aws:ecr:${AWS::Region}:366590864501:repository/bedrock-proxy-api"
+                  - !Sub "arn:aws:ecr:${AWS::Region}:366590864501:repository/bedrock-proxy-api-ecs"
+
+  # ================================
+  # CloudWatch Log Group
+  # ================================
+  CodeBuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/codebuild/${ProjectName}-image-copy"
+      RetentionInDays: 30
+
+  # ================================
+  # CodeBuild Project
+  # ================================
+  MultiArchImageCopyProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${ProjectName}-multi-arch-copy"
+      Description: Copy AWS Samples Bedrock Gateway images (both x64 and ARM64) to private ECR
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: !Ref BuildComputeType
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true # Required for Docker operations
+        EnvironmentVariables:
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+          - Name: SOURCE_IMAGE_BASE
+            Value: !Sub "366590864501.dkr.ecr.${AWS::Region}.amazonaws.com/bedrock-proxy-api-ecs"
+          - Name: TARGET_REPOSITORY_URI
+            Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${TargetECRRepositoryName}"
+          - Name: SOURCE_TAG
+            Value: !Ref SourceImageTag
+          - Name: TARGET_TAG
+            Value: !Ref TargetImageTag
+      Source:
+        Type: NO_SOURCE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - echo Logging in to Amazon ECR...
+                - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+                - echo Logging in to AWS Samples ECR repository...
+                - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin 366590864501.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+                - echo Installing Docker buildx for multi-arch support...
+                - docker buildx create --name multiarch-builder --use --bootstrap
+                - docker buildx inspect --bootstrap
+            build:
+              commands:
+                - echo Build started on `date`
+                - echo "Checking available architectures in source repository..."
+                
+                # Try to pull both architectures from source
+                - |
+                  ARCHITECTURES=()
+                  
+                  # Check for ARM64 image
+                  if docker pull --platform linux/arm64 $SOURCE_IMAGE_BASE:$SOURCE_TAG 2>/dev/null; then
+                    echo "ARM64 image found"
+                    ARCHITECTURES+=("linux/arm64")
+                    docker tag $SOURCE_IMAGE_BASE:$SOURCE_TAG $TARGET_REPOSITORY_URI:$TARGET_TAG-arm64
+                  else
+                    echo "ARM64 image not found, skipping..."
+                  fi
+                  
+                  # Check for AMD64 image
+                  if docker pull --platform linux/amd64 $SOURCE_IMAGE_BASE:$SOURCE_TAG 2>/dev/null; then
+                    echo "AMD64 image found"
+                    ARCHITECTURES+=("linux/amd64")
+                    docker tag $SOURCE_IMAGE_BASE:$SOURCE_TAG $TARGET_REPOSITORY_URI:$TARGET_TAG-amd64
+                  else
+                    echo "AMD64 image not found, skipping..."
+                  fi
+                  
+                  # If no specific architecture worked, try pulling without platform specification
+                  if [ ${#ARCHITECTURES[@]} -eq 0 ]; then
+                    echo "No specific architecture images found, trying generic pull..."
+                    if docker pull $SOURCE_IMAGE_BASE:$SOURCE_TAG; then
+                      # Inspect the image to determine its architecture
+                      ARCH=$(docker inspect $SOURCE_IMAGE_BASE:$SOURCE_TAG | jq -r '.[0].Architecture')
+                      echo "Generic image architecture detected: $ARCH"
+                      
+                      if [ "$ARCH" = "arm64" ]; then
+                        ARCHITECTURES+=("linux/arm64")
+                        docker tag $SOURCE_IMAGE_BASE:$SOURCE_TAG $TARGET_REPOSITORY_URI:$TARGET_TAG-arm64
+                      elif [ "$ARCH" = "amd64" ] || [ "$ARCH" = "x86_64" ]; then
+                        ARCHITECTURES+=("linux/amd64")
+                        docker tag $SOURCE_IMAGE_BASE:$SOURCE_TAG $TARGET_REPOSITORY_URI:$TARGET_TAG-amd64
+                      else
+                        echo "Unknown architecture: $ARCH"
+                        exit 1
+                      fi
+                    else
+                      echo "Failed to pull any image variant"
+                      exit 1
+                    fi
+                  fi
+                  
+                  echo "Found architectures: ${ARCHITECTURES[*]}"
+                  
+                  # Store architectures for post_build phase
+                  printf '%s\n' "${ARCHITECTURES[@]}" > /tmp/architectures.txt
+            post_build:
+              commands:
+                - echo Build completed on `date`
+                - echo Pushing individual architecture images...
+                
+                # Read architectures from file
+                - |
+                  ARCHITECTURES=()
+                  while IFS= read -r line; do
+                    ARCHITECTURES+=("$line")
+                  done < /tmp/architectures.txt
+                  
+                  # Push individual architecture images
+                  MANIFEST_IMAGES=()
+                  for arch in "${ARCHITECTURES[@]}"; do
+                    if [ "$arch" = "linux/arm64" ]; then
+                      echo "Pushing ARM64 image..."
+                      docker push $TARGET_REPOSITORY_URI:$TARGET_TAG-arm64
+                      MANIFEST_IMAGES+=("$TARGET_REPOSITORY_URI:$TARGET_TAG-arm64")
+                    elif [ "$arch" = "linux/amd64" ]; then
+                      echo "Pushing AMD64 image..."
+                      docker push $TARGET_REPOSITORY_URI:$TARGET_TAG-amd64
+                      MANIFEST_IMAGES+=("$TARGET_REPOSITORY_URI:$TARGET_TAG-amd64")
+                    fi
+                  done
+                  
+                  # Create and push multi-arch manifest if we have multiple architectures
+                  if [ ${#MANIFEST_IMAGES[@]} -gt 1 ]; then
+                    echo "Creating multi-architecture manifest..."
+                    docker manifest create $TARGET_REPOSITORY_URI:$TARGET_TAG "${MANIFEST_IMAGES[@]}"
+                    
+                    # Annotate each architecture in the manifest
+                    for arch in "${ARCHITECTURES[@]}"; do
+                      if [ "$arch" = "linux/arm64" ]; then
+                        docker manifest annotate $TARGET_REPOSITORY_URI:$TARGET_TAG $TARGET_REPOSITORY_URI:$TARGET_TAG-arm64 --os linux --arch arm64
+                      elif [ "$arch" = "linux/amd64" ]; then
+                        docker manifest annotate $TARGET_REPOSITORY_URI:$TARGET_TAG $TARGET_REPOSITORY_URI:$TARGET_TAG-amd64 --os linux --arch amd64
+                      fi
+                    done
+                    
+                    echo "Pushing multi-architecture manifest..."
+                    docker manifest push $TARGET_REPOSITORY_URI:$TARGET_TAG
+                    
+                    echo "Multi-architecture image available at: $TARGET_REPOSITORY_URI:$TARGET_TAG"
+                    echo "Individual architectures:"
+                    for image in "${MANIFEST_IMAGES[@]}"; do
+                      echo "  - $image"
+                    done
+                  else
+                    # Only one architecture, create a simple tag
+                    if [ ${#MANIFEST_IMAGES[@]} -eq 1 ]; then
+                      SINGLE_IMAGE="${MANIFEST_IMAGES[0]}"
+                      echo "Only one architecture found, creating simple tag..."
+                      docker tag "$SINGLE_IMAGE" $TARGET_REPOSITORY_URI:$TARGET_TAG
+                      docker push $TARGET_REPOSITORY_URI:$TARGET_TAG
+                      echo "Single architecture image available at: $TARGET_REPOSITORY_URI:$TARGET_TAG"
+                    fi
+                  fi
+                  
+                  echo "Image copy completed successfully!"
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: !Ref CodeBuildLogGroup
+
+  # ================================
+  # Lambda Function for Triggering Build
+  # ================================
+  BuildTriggerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-build-trigger-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: CodeBuildStartPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource: !GetAtt MultiArchImageCopyProject.Arn
+
+  BuildTriggerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-build-trigger"
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt BuildTriggerRole.Arn
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import cfnresponse
+          
+          def lambda_handler(event, context):
+              print(f"Event: {json.dumps(event)}")
+              
+              if event['RequestType'] == 'Delete':
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  return
+              
+              try:
+                  codebuild = boto3.client('codebuild')
+                  project_name = event['ResourceProperties']['ProjectName']
+                  
+                  print(f"Starting CodeBuild project: {project_name}")
+                  
+                  response = codebuild.start_build(projectName=project_name)
+                  build_id = response['build']['id']
+                  
+                  print(f"Build started with ID: {build_id}")
+                  
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                      'BuildId': build_id,
+                      'Message': f'Build started successfully with ID: {build_id}'
+                  })
+                  
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {
+                      'Error': str(e)
+                  })
+
+  # ================================
+  # Custom Resource to Trigger Build
+  # ================================
+  TriggerImageCopy:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt BuildTriggerFunction.Arn
+      ProjectName: !Ref MultiArchImageCopyProject
+    DependsOn:
+      - MultiArchImageCopyProject
+      - ECRRepository
+
+# ================================
+# Outputs
+# ================================
+Outputs:
+  ECRRepositoryURI:
+    Description: URI of the target ECR repository
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${TargetECRRepositoryName}"
+    Export:
+      Name: !Sub "${ProjectName}-ecr-repo-uri"
+      
+  ECRRepositoryName:
+    Description: Name of the target ECR repository
+    Value: !Ref TargetECRRepositoryName
+    Export:
+      Name: !Sub "${ProjectName}-ecr-repo-name"
+      
+  MultiArchImageURI:
+    Description: Full URI of the multi-architecture image
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${TargetECRRepositoryName}:${TargetImageTag}"
+    Export:
+      Name: !Sub "${ProjectName}-multi-arch-image-uri"
+      
+  ARM64ImageURI:
+    Description: Full URI of the ARM64-specific image
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${TargetECRRepositoryName}:${TargetImageTag}-arm64"
+    Export:
+      Name: !Sub "${ProjectName}-arm64-image-uri"
+      
+  AMD64ImageURI:
+    Description: Full URI of the AMD64-specific image
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${TargetECRRepositoryName}:${TargetImageTag}-amd64"
+    Export:
+      Name: !Sub "${ProjectName}-amd64-image-uri"
+      
+  CodeBuildProjectName:
+    Description: Name of the CodeBuild project for future builds
+    Value: !Ref MultiArchImageCopyProject
+    Export:
+      Name: !Sub "${ProjectName}-codebuild-project"
+      
+  CodeBuildProjectArn:
+    Description: ARN of the CodeBuild project
+    Value: !GetAtt MultiArchImageCopyProject.Arn
+    Export:
+      Name: !Sub "${ProjectName}-codebuild-project-arn"

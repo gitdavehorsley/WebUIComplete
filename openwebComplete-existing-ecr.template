@@ -1,0 +1,636 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Complete Open WebUI with AWS Bedrock integration - ECS Fargate, ALB (using existing ECR repositories)'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: webui-bedrock
+    Description: Project name used for resource naming
+    
+  Environment:
+    Type: String
+    Default: poc
+    AllowedValues: 
+      - poc
+      - dev
+      - staging
+      - prod
+    Description: Environment name
+    
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Existing VPC ID for deployment
+    
+  VpcCidr:
+    Type: String
+    Default: "10.0.0.0/8"
+    Description: VPC CIDR block for internal network access and security group rules (found in VPC details, e.g., 10.0.0.0/16)
+    
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Existing private subnet IDs for internal ALB and ECS tasks (minimum 2)
+    
+  AllowedCidrBlocks:
+    Type: CommaDelimitedList
+    Default: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+    Description: CIDR blocks for future external access control (currently using VpcCidr)
+    
+  CertificateArn:
+    Type: String
+    Default: ""
+    Description: ACM Certificate ARN for HTTPS (leave empty for HTTP only)
+    
+  DomainName:
+    Type: String
+    Default: ""
+    Description: Custom domain name (optional)
+
+  # ================================
+  # ECR Repository Configuration
+  # ================================
+  OpenWebUIRepositoryURI:
+    Type: String
+    Description: Full URI of existing Open WebUI ECR repository (e.g., 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-repo/open-webui)
+    
+  BedrockGatewayRepositoryURI:
+    Type: String
+    Description: Full URI of existing Bedrock Gateway ECR repository (e.g., 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-repo/bedrock-gateway)
+    
+  OpenWebUIImageTag:
+    Type: String
+    Default: latest
+    Description: Image tag to use for Open WebUI container
+    
+  BedrockGatewayImageTag:
+    Type: String
+    Default: latest
+    Description: Image tag to use for Bedrock Gateway container
+    
+  ApiKeySecretArn:
+    Type: String
+    Description: ARN of the AWS Secrets Manager secret containing the API key for Bedrock access
+
+Conditions:
+  HasCertificate: !Not [!Equals [!Ref CertificateArn, ""]]
+  HasDomain: !Not [!Equals [!Ref DomainName, ""]]
+
+Resources:
+
+
+  # ================================
+  # EFS for Persistent Storage
+  # ================================
+  EFSFileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-efs"
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting
+
+  EFSMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      SubnetId: !Select [0, !Ref PrivateSubnetIds]
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  EFSMountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      SubnetId: !Select [1, !Ref PrivateSubnetIds]
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  # ================================
+  # Security Groups
+  # ================================
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${ProjectName}-alb-sg"
+      GroupDescription: Security group for internal ALB
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref VpcCidr
+          Description: HTTP access from VPC networks
+        - !If
+          - HasCertificate
+          - IpProtocol: tcp
+            FromPort: 443
+            ToPort: 443
+            CidrIp: !Ref VpcCidr
+            Description: HTTPS access from VPC networks
+          - !Ref AWS::NoValue
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-alb-sg"
+
+  ECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${ProjectName}-ecs-sg"
+      GroupDescription: Security group for ECS tasks
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: !Ref VpcCidr
+          Description: Open WebUI from VPC networks
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: !Ref VpcCidr
+          Description: Bedrock Gateway from VPC networks
+      SecurityGroupEgress:
+        # REPLACE the broad rule with specific ones:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS for AWS APIs and Bedrock
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP for package downloads
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          CidrIp: !Ref VpcCidr
+          Description: EFS access to VPC networks
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-ecs-sg"
+
+  EFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${ProjectName}-efs-sg"
+      GroupDescription: Security group for EFS
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          CidrIp: !Ref VpcCidr
+          Description: NFS from VPC networks
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-efs-sg"
+
+  # ================================
+  # Application Load Balancer (Internal)
+  # ================================
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${ProjectName}-internal-alb"
+      Scheme: internal
+      Type: application
+      Subnets: !Ref PrivateSubnetIds
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-internal-alb"
+
+  ALBTargetGroupWebUI:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${ProjectName}-webui-tg"
+      Port: 8080
+      Protocol: HTTP
+      VpcId: !Ref VpcId
+      TargetType: ip
+      HealthCheckEnabled: true
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckIntervalSeconds: 15  # Faster detection
+      HealthCheckTimeoutSeconds: 10   # More generous timeout
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: "200,302,404"  # Add 302 for redirects
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-webui-tg"
+
+  ALBTargetGroupGateway:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${ProjectName}-gateway-tg"
+      Port: 8000
+      Protocol: HTTP
+      VpcId: !Ref VpcId
+      TargetType: ip
+      HealthCheckEnabled: true
+      HealthCheckPath: /health
+      HealthCheckProtocol: HTTP
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-gateway-tg"
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    DependsOn: ApplicationLoadBalancer
+    Properties:
+      DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: 404
+            ContentType: text/plain
+            MessageBody: "Not Found"
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: !If [HasCertificate, 443, 80]
+      Protocol: !If [HasCertificate, HTTPS, HTTP]
+      Certificates:
+        - !If
+          - HasCertificate
+          - CertificateArn: !Ref CertificateArn
+          - !Ref AWS::NoValue
+
+  ALBListenerRuleWebUI:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    DependsOn: 
+      - ALBListener
+      - ALBTargetGroupWebUI
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroupWebUI
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - "/*"
+      ListenerArn: !Ref ALBListener
+      Priority: 100
+
+  ALBListenerRuleGateway:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    DependsOn: 
+      - ALBListener
+      - ALBTargetGroupGateway
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroupGateway
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - "/api/v1/*"
+      ListenerArn: !Ref ALBListener
+      Priority: 200
+
+  # ================================
+  # ECS Cluster and IAM Roles
+  # ================================
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${ProjectName}-cluster"
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-ecs-execution-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ECRAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:BatchCheckLayerAvailability
+                Resource: "*"  # Allow access to any ECR repository
+        - PolicyName: SecretsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref ApiKeySecretArn
+
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-ecs-task-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-*"
+
+  # ================================
+  # CloudWatch Log Group
+  # ================================
+  CloudWatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${ProjectName}"
+      RetentionInDays: 30
+
+  # ================================
+  # ECS Task Definitions (Separate Services)
+  # ================================
+  WebUITaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn: 
+      - ECSTaskExecutionRole
+      - ECSTaskRole
+      - EFSFileSystem
+    Properties:
+      Family: !Sub "${ProjectName}-webui-task"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      Cpu: 2048          # 2 vCPU for WebUI
+      Memory: 4096       # 4GB RAM for WebUI
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: open-webui
+          Image: !Sub "${OpenWebUIRepositoryURI}:${OpenWebUIImageTag}"
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8080
+              Protocol: tcp
+          Memory: 4096
+          MemoryReservation: 3072
+          Cpu: 2048
+          Environment:
+            - Name: OPENAI_API_BASE_URL
+              Value: !Sub "http://${ApplicationLoadBalancer.DNSName}/api/v1"
+            - Name: WEBUI_AUTH
+              Value: "true"
+            - Name: ENABLE_SIGNUP
+              Value: "false"
+            - Name: WEBUI_NAME
+              Value: "AWS Bedrock WebUI"
+            - Name: DEFAULT_MODELS
+              Value: "anthropic.claude-3-sonnet-20240229-v1:0"
+            - Name: WEBUI_SECRET_KEY
+              Value: !Sub "${ProjectName}-secret-key"
+          Secrets:
+            - Name: OPENAI_API_KEY
+              ValueFrom: !Ref ApiKeySecretArn
+          MountPoints:
+            - SourceVolume: webui-data
+              ContainerPath: /app/backend/data
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudWatchLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: webui
+
+      Volumes:
+        - Name: webui-data
+          EFSVolumeConfiguration:
+            FileSystemId: !Ref EFSFileSystem
+            RootDirectory: /webui
+            TransitEncryption: ENABLED
+
+  GatewayTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn: 
+      - ECSTaskExecutionRole
+      - ECSTaskRole
+    Properties:
+      Family: !Sub "${ProjectName}-gateway-task"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      Cpu: 512           # 0.5 vCPU for Gateway
+      Memory: 1024       # 1GB RAM for Gateway
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: bedrock-gateway
+          Image: !Sub "${BedrockGatewayRepositoryURI}:${BedrockGatewayImageTag}"
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8000
+              Protocol: tcp
+          Memory: 1024
+          MemoryReservation: 512
+          Cpu: 512
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: LOG_LEVEL
+              Value: INFO
+            - Name: CORS_ALLOW_ORIGIN
+              Value: "*"  # For web UI access
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudWatchLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: gateway
+
+
+  # ================================
+  # ECS Services (Separate)
+  # ================================
+  WebUIService:
+    Type: AWS::ECS::Service
+    DependsOn: 
+      - ALBListenerRuleWebUI
+      - WebUITaskDefinition
+    Properties:
+      ServiceName: !Sub "${ProjectName}-webui-service"
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref WebUITaskDefinition
+      LaunchType: FARGATE
+      DesiredCount: 1
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          SecurityGroups:
+            - !Ref ECSSecurityGroup
+          Subnets: !Ref PrivateSubnetIds
+          AssignPublicIp: DISABLED
+      LoadBalancers:
+        - ContainerName: open-webui
+          ContainerPort: 8080
+          TargetGroupArn: !Ref ALBTargetGroupWebUI
+      HealthCheckGracePeriodSeconds: 120
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-webui-service"
+
+  GatewayService:
+    Type: AWS::ECS::Service
+    DependsOn: 
+      - ALBListenerRuleGateway
+      - GatewayTaskDefinition
+    Properties:
+      ServiceName: !Sub "${ProjectName}-gateway-service"
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref GatewayTaskDefinition
+      LaunchType: FARGATE
+      DesiredCount: 1
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          SecurityGroups:
+            - !Ref ECSSecurityGroup
+          Subnets: !Ref PrivateSubnetIds
+          AssignPublicIp: DISABLED
+      LoadBalancers:
+        - ContainerName: bedrock-gateway
+          ContainerPort: 8000
+          TargetGroupArn: !Ref ALBTargetGroupGateway
+      HealthCheckGracePeriodSeconds: 120
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-gateway-service"
+
+  # ================================
+  # Auto Scaling (Separate Services)
+  # ================================
+  WebUIScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    DependsOn: WebUIService
+    Properties:
+      MaxCapacity: 5
+      MinCapacity: 1
+      ResourceId: !Sub "service/${ECSCluster}/${WebUIService.Name}"
+      RoleARN: !Sub "arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService"
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+
+  WebUIScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    DependsOn: WebUIScalingTarget
+    Properties:
+      PolicyName: !Sub "${ProjectName}-webui-scaling-policy"
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref WebUIScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: 70.0
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 300
+
+  GatewayScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    DependsOn: GatewayService
+    Properties:
+      MaxCapacity: 3
+      MinCapacity: 1
+      ResourceId: !Sub "service/${ECSCluster}/${GatewayService.Name}"
+      RoleARN: !Sub "arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService"
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+
+  GatewayScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    DependsOn: GatewayScalingTarget
+    Properties:
+      PolicyName: !Sub "${ProjectName}-gateway-scaling-policy"
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref GatewayScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: 70.0
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 300
+
+# ================================
+# Outputs
+# ================================
+Outputs:
+  LoadBalancerDNS:
+    Description: Internal Load Balancer DNS Name
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+    Export:
+      Name: !Sub "${ProjectName}-alb-dns"
+
+  LoadBalancerURL:
+    Description: Internal Load Balancer URL
+    Value: !Sub 
+      - "${Protocol}://${DNSName}"
+      - Protocol: !If [HasCertificate, "https", "http"]
+        DNSName: !GetAtt ApplicationLoadBalancer.DNSName
+    Export:
+      Name: !Sub "${ProjectName}-alb-url"
+
+  ECSClusterName:
+    Description: ECS Cluster Name
+    Value: !Ref ECSCluster
+    Export:
+      Name: !Sub "${ProjectName}-ecs-cluster"
+
+  WebUIServiceName:
+    Description: WebUI ECS Service Name
+    Value: !GetAtt WebUIService.Name
+    Export:
+      Name: !Sub "${ProjectName}-webui-service"
+
+  GatewayServiceName:
+    Description: Gateway ECS Service Name
+    Value: !GetAtt GatewayService.Name
+    Export:
+      Name: !Sub "${ProjectName}-gateway-service"
+
+  OpenWebUIRepositoryURI:
+    Description: Open WebUI ECR Repository URI (from parameter)
+    Value: !Ref OpenWebUIRepositoryURI
+    Export:
+      Name: !Sub "${ProjectName}-webui-repo-uri"
+
+  BedrockGatewayRepositoryURI:
+    Description: Bedrock Gateway ECR Repository URI (from parameter)
+    Value: !Ref BedrockGatewayRepositoryURI
+    Export:
+      Name: !Sub "${ProjectName}-gateway-repo-uri" 
