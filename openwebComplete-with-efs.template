@@ -208,7 +208,7 @@ Resources:
   EFSFileSystem:
     Type: AWS::EFS::FileSystem
     Properties:
-      Encrypted: !If [IsProvisionedThroughput, !Ref EFSEncryptionAtRest, !Ref EFSEncryptionAtRest]
+      Encrypted: !Ref EFSEncryptionAtRest
       PerformanceMode: !Ref EFSPerformanceMode
       ThroughputMode: !Ref EFSThroughputMode
       ProvisionedThroughputInMibps: !If [IsProvisionedThroughput, !Ref EFSProvisionedThroughput, !Ref AWS::NoValue]
@@ -222,27 +222,28 @@ Resources:
 
   EFSMountTarget1:
     Type: AWS::EFS::MountTarget
+    DependsOn: EFSFileSystem
     Properties:
       FileSystemId: !Ref EFSFileSystem
       SubnetId: !Select [0, !Ref PrivateSubnetIds]
       SecurityGroups:
         - !Ref EFSSecurityGroup
-      IpAddress: !Select [0, !GetAtt EFSFileSystem.MountTargets]
 
   EFSMountTarget2:
     Type: AWS::EFS::MountTarget
+    DependsOn: EFSFileSystem
     Properties:
       FileSystemId: !Ref EFSFileSystem
       SubnetId: !Select [1, !Ref PrivateSubnetIds]
       SecurityGroups:
         - !Ref EFSSecurityGroup
-      IpAddress: !Select [1, !GetAtt EFSFileSystem.MountTargets]
 
   # ================================
   # EFS Access Points
   # ================================
   EFSWebUIAccessPoint:
     Type: AWS::EFS::AccessPoint
+    DependsOn: EFSFileSystem
     Properties:
       FileSystemId: !Ref EFSFileSystem
       Tags:
@@ -262,6 +263,7 @@ Resources:
 
   EFSGatewayAccessPoint:
     Type: AWS::EFS::AccessPoint
+    DependsOn: EFSFileSystem
     Properties:
       FileSystemId: !Ref EFSFileSystem
       Tags:
