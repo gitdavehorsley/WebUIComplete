@@ -73,7 +73,7 @@ Parameters:
     
   DefaultModelId:
     Type: String
-    Default: anthropic.claude-3-sonnet-20240229-v1:0
+    Default: anthropic.claude-3-5-haiku-20241007-v1:0
     Description: The default model ID, please make sure the model ID is supported in the current region
 
 Conditions:
