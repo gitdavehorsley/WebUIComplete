@@ -79,13 +79,7 @@ Parameters:
   # ================================
   # EFS Configuration
   # ================================
-  EFSEncryptionAtRest:
-    Type: String
-    Default: "true"
-    AllowedValues:
-      - "true"
-      - "false"
-    Description: Enable encryption at rest for EFS file system (true/false)
+
     
   EFSPerformanceMode:
     Type: String
@@ -114,7 +108,6 @@ Conditions:
   HasCertificate: !Not [!Equals [!Ref CertificateArn, ""]]
   HasDomain: !Not [!Equals [!Ref DomainName, ""]]
   IsProvisionedThroughput: !Equals [!Ref EFSThroughputMode, "provisioned"]
-  EFSEncryptionEnabled: !Equals [!Ref EFSEncryptionAtRest, "true"]
 
 Resources:
 
@@ -209,7 +202,6 @@ Resources:
   EFSFileSystem:
     Type: AWS::EFS::FileSystem
     Properties:
-      Encrypted: !Ref EFSEncryptionEnabled
       PerformanceMode: !Ref EFSPerformanceMode
       ThroughputMode: !Ref EFSThroughputMode
       ProvisionedThroughputInMibps: !If [IsProvisionedThroughput, !Ref EFSProvisionedThroughput, !Ref AWS::NoValue]
