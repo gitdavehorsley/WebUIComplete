@@ -208,7 +208,6 @@ Resources:
   EFSFileSystem:
     Type: AWS::EFS::FileSystem
     Properties:
-      FileSystemName: !Sub "${ProjectName}-efs"
       Encrypted: !If [IsProvisionedThroughput, !Ref EFSEncryptionAtRest, !Ref EFSEncryptionAtRest]
       PerformanceMode: !Ref EFSPerformanceMode
       ThroughputMode: !Ref EFSThroughputMode
@@ -246,7 +245,7 @@ Resources:
     Type: AWS::EFS::AccessPoint
     Properties:
       FileSystemId: !Ref EFSFileSystem
-      AccessPointTag:
+      Tags:
         - Key: Name
           Value: !Sub "${ProjectName}-webui-access-point"
         - Key: Purpose
@@ -265,7 +264,7 @@ Resources:
     Type: AWS::EFS::AccessPoint
     Properties:
       FileSystemId: !Ref EFSFileSystem
-      AccessPointTag:
+      Tags:
         - Key: Name
           Value: !Sub "${ProjectName}-gateway-access-point"
         - Key: Purpose
