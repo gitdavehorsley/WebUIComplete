@@ -241,6 +241,8 @@ Resources:
           OwnerGid: "1000"
           Permissions: "755"
 
+=======
+>>>>>>> ecc14a79d8c885cff113a08f76092c6f8487b2ce
   # ================================
   # Application Load Balancer (Internal)
   # ================================
@@ -728,4 +730,4 @@ Outputs:
     Description: EFS Gateway Access Point ID
     Value: !Ref EFSGatewayAccessPoint
     Export:
-      Name: !Sub "${ProjectName}-gateway-access-point-id" 
+      Name: !Sub "${ProjectName}-gateway-access-point-id"
