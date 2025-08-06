@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'CodeBuild project to build minimal Open WebUI Docker image using Amazon Linux base image with simple EFS utils installation'
+Description: 'CodeBuild project to build minimal Open WebUI Docker image using Amazon Linux base image with EFS utils and SSM agent for ECS exec support'
 
 Parameters:
   ProjectName:
@@ -187,7 +187,7 @@ Resources:
     Type: AWS::CodeBuild::Project
     Properties:
       Name: !Ref ProjectName
-      Description: Build minimal Open WebUI Docker image using Amazon Linux base image with simple EFS utils installation
+      Description: Build minimal Open WebUI Docker image using Amazon Linux base image with EFS utils and SSM agent for ECS exec support
       ServiceRole: !GetAtt CodeBuildServiceRole.Arn
       Artifacts:
         Type: NO_ARTIFACTS
@@ -240,7 +240,7 @@ Resources:
                 - |
                   cat > Dockerfile.amzn << 'EOF'
                   # Minimal Dockerfile for Open WebUI using Amazon Linux
-                  # Optimized for Bedrock usage with minimal image size and simple EFS utils installation
+                  # Optimized for Bedrock usage with minimal image size, EFS utils, and SSM agent for ECS exec
                   # Using AWS Public ECR Amazon Linux base image
                   
                   FROM public.ecr.aws/amazonlinux/amazonlinux:2023
@@ -279,10 +279,12 @@ Resources:
                       TORCH_HOME="/tmp" \
                       HUGGINGFACE_HUB_CACHE="/tmp"
                   
-                  # Install Python 3.11 and system dependencies with EFS support
+                  # Install Python 3.11 and system dependencies with EFS support and SSM agent
                   RUN yum update -y && \
                       yum install -y python3.11 python3.11-pip && \
                       yum install -y amazon-efs-utils && \
+                      yum install -y curl wget tar gzip && \
+                      yum install -y amazon-ssm-agent && \
                       yum clean all && \
                       rm -rf /var/cache/yum/*
                   
@@ -301,8 +303,22 @@ Resources:
                       pip install --no-cache-dir open-webui && \
                       pip cache purge
                   
-                  # Create data directory
-                  RUN mkdir -p /app/data
+                  # Create data directory and SSM agent directories
+                  RUN mkdir -p /app/data && \
+                      mkdir -p /etc/amazon/ssm && \
+                      mkdir -p /var/lib/amazon/ssm && \
+                      mkdir -p /var/log/amazon/ssm
+                  
+                  # Create startup script to run both SSM agent and Open WebUI
+                  RUN echo '#!/bin/bash' > /start.sh && \
+                      echo 'set -e' >> /start.sh && \
+                      echo '# Start SSM agent in background' >> /start.sh && \
+                      echo 'amazon-ssm-agent &' >> /start.sh && \
+                      echo '# Wait a moment for SSM agent to start' >> /start.sh && \
+                      echo 'sleep 2' >> /start.sh && \
+                      echo '# Start Open WebUI in foreground' >> /start.sh && \
+                      echo 'exec open-webui serve --host 0.0.0.0 --port 8080' >> /start.sh && \
+                      chmod +x /start.sh
                   
                   # Expose port
                   EXPOSE 8080
@@ -311,8 +327,8 @@ Resources:
                   HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
                     CMD curl --silent --fail http://localhost:8080/health || exit 1
                   
-                  # Run the application
-                  CMD ["open-webui", "serve", "--host", "0.0.0.0", "--port", "8080"]
+                  # Run the startup script
+                  CMD ["/start.sh"]
                   EOF
                 - echo Building Amazon Linux Open WebUI image...
                 - echo "Building Open WebUI image using Amazon Linux base image..."
