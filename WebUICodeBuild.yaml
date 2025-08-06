@@ -1,10 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'CodeBuild project to build Open WebUI Docker image optimized for ECS with Bedrock integration'
+Description: 'CodeBuild project to build Open WebUI Docker image using simple approach with uv runtime manager'
 
 Parameters:
   ProjectName:
     Type: String
-    Default: open-webui-bedrock
+    Default: open-webui-simple
     Description: Name for the CodeBuild project and ECR repository (lowercase letters, numbers, and hyphens only)
     AllowedPattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
     ConstraintDescription: Must contain only lowercase letters, numbers, and hyphens. Must start and end with alphanumeric characters.
@@ -13,7 +13,7 @@ Parameters:
     
   ECRRepositoryName:
     Type: String
-    Default: open-webui-bedrock
+    Default: open-webui-simple
     Description: Name for the ECR repository (lowercase letters, numbers, and hyphens only)
     AllowedPattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]+$'
     ConstraintDescription: Must contain only lowercase letters, numbers, and hyphens. Must start and end with alphanumeric characters.
@@ -198,7 +198,7 @@ Resources:
     Type: AWS::CodeBuild::Project
     Properties:
       Name: !Ref ProjectName
-      Description: Build Open WebUI Docker image optimized for ECS and Bedrock
+      Description: Build Open WebUI Docker image using simple approach with uv runtime manager
       ServiceRole: !GetAtt CodeBuildServiceRole.Arn
       Artifacts:
         Type: NO_ARTIFACTS
@@ -258,46 +258,24 @@ Resources:
                 - echo "Build started on $(date)"
                 - echo "Available disk space:"
                 - df -h
-                - echo "Creating optimized Dockerfile for ECS/Bedrock..."
+                - echo "Creating simple Dockerfile for Open WebUI..."
                 - |
-                  cat > Dockerfile.ecs-optimized << 'EOF'
-                  # Multi-stage build optimized for ECS and Bedrock
-                  # Using AWS public ECR images to avoid Docker Hub rate limits
-                  FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/node:22-alpine3.20 AS build
-                  ARG BUILD_HASH=ecs-build
+                  cat > Dockerfile.simple << 'EOF'
+                  # Simple Dockerfile for Open WebUI
+                  # Based on official Open WebUI installation recommendations
                   
-                  WORKDIR /app
-                  RUN apk add --no-cache git
+                  FROM python:3.11-slim-bookworm
                   
-                  # Copy package files and install ALL dependencies (including dev dependencies for build)
-                  COPY package.json package-lock.json ./
-                  RUN npm ci --force
-                  
-                  # Copy source and build frontend
-                  COPY . .
-                  ENV APP_BUILD_VERSION=${BUILD_HASH}
-                  RUN npm run build
-                  
-                  # ================================
-                  # Production stage - ECS optimized
-                  # ================================
-                  FROM public.ecr.aws/docker/library/python:3.11-slim-bookworm AS production
-                  
-                  # Build args
-                  ARG BUILD_HASH=ecs-build
-                  ARG UID=0
-                  ARG GID=0
-                  
-                  # Environment variables optimized for ECS
-                  ENV ENV=prod \
-                      PORT=8080 \
-                      PYTHONUNBUFFERED=1 \
+                  # Set environment variables
+                  ENV PYTHONUNBUFFERED=1 \
                       PYTHONDONTWRITEBYTECODE=1 \
+                      PORT=8080 \
+                      ENV=prod \
                       SCARF_NO_ANALYTICS=true \
                       DO_NOT_TRACK=true \
                       ANONYMIZED_TELEMETRY=false \
                       DOCKER=true \
-                      WEBUI_BUILD_VERSION=${BUILD_HASH}
+                      WEBUI_BUILD_VERSION=${BUILD_HASH:-simple-build}
                   
                   # ECS-specific configurations
                   ENV OPENAI_API_BASE_URL="" \
@@ -315,139 +293,44 @@ Resources:
                       HF_HOME="/tmp" \
                       TIKTOKEN_CACHE_DIR="/tmp"
                   
-                  WORKDIR /app/backend
+                  # Install system dependencies
+                  RUN apt-get update && \
+                      apt-get install -y --no-install-recommends \
+                      git \
+                      curl \
+                      build-essential \
+                      jq \
+                      && rm -rf /var/lib/apt/lists/*
                   
-                  # Create user if not root
-                  RUN if [ $UID -ne 0 ]; then \
-                      adduser --uid $UID --disabled-password --no-create-home app; \
-                      fi
+                  # Set working directory
+                  WORKDIR /app
                   
-                  # Install system dependencies with robust error handling and retry logic
-                  RUN set -e; \
-                      # Function to retry apt operations \
-                      retry_apt() { \
-                        local max_attempts=3; \
-                        local attempt=1; \
-                        while [ $attempt -le $max_attempts ]; do \
-                          echo "Attempt $attempt of $max_attempts"; \
-                          if "$@"; then \
-                            return 0; \
-                          else \
-                            echo "Attempt $attempt failed, cleaning cache and retrying..."; \
-                            apt-get clean; \
-                            rm -rf /var/lib/apt/lists/*; \
-                            if [ $attempt -lt $max_attempts ]; then \
-                              sleep 10; \
-                            fi; \
-                            attempt=$((attempt + 1)); \
-                          fi; \
-                        done; \
-                        echo "All attempts failed"; \
-                        return 1; \
-                      }; \
-                      \
-                      # Clean any existing package cache and lists \
-                      apt-get clean; \
-                      rm -rf /var/lib/apt/lists/*; \
-                      \
-                      # Update package lists with retry \
-                      retry_apt apt-get update; \
-                      \
-                      # Install packages with retry \
-                      retry_apt apt-get install -y --no-install-recommends \
-                        git \
-                        build-essential \
-                        pandoc \
-                        netcat-openbsd \
-                        curl \
-                        jq \
-                        gcc \
-                        python3-dev \
-                        nfs-common \
-                        ca-certificates \
-                        gnupg \
-                        lsb-release; \
-                      \
-                      # Install amazon-efs-utils for EFS mounting with retry \
-                      retry_apt sh -c 'curl -o /tmp/amazon-efs-utils.deb https://github.com/aws/efs-utils/releases/latest/download/amazon-efs-utils_1.35.0_all.deb && apt-get install -y /tmp/amazon-efs-utils.deb'; \
-                      \
-                      # Clean up \
-                      rm -f /tmp/amazon-efs-utils.deb; \
-                      apt-get clean; \
-                      rm -rf /var/lib/apt/lists/*
+                  # Install uv (recommended by Open WebUI)
+                  RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+                  ENV PATH="/root/.cargo/bin:$PATH"
                   
-                  # Copy backend source and requirements
-                  COPY --chown=$UID:$GID ./backend .
+                  # Clone Open WebUI repository
+                  RUN git clone https://github.com/open-webui/open-webui.git .
                   
-                  # Install uv runtime manager (recommended by Open WebUI)
-                  RUN set -e; \
-                      # Function to retry operations \
-                      retry_operation() { \
-                        local max_attempts=3; \
-                        local attempt=1; \
-                        while [ $attempt -le $max_attempts ]; do \
-                          echo "Attempt $attempt of $max_attempts"; \
-                          if "$@"; then \
-                            return 0; \
-                          else \
-                            echo "Attempt $attempt failed, retrying in 10 seconds..."; \
-                            if [ $attempt -lt $max_attempts ]; then \
-                              sleep 10; \
-                            fi; \
-                            attempt=$((attempt + 1)); \
-                          fi; \
-                        done; \
-                        echo "All attempts failed"; \
-                        return 1; \
-                      }; \
-                      \
-                      # Install uv using the official installer \
-                      echo "Installing uv runtime manager..."; \
-                      retry_operation curl -LsSf https://astral.sh/uv/install.sh | sh; \
-                      \
-                      # Add uv to PATH \
-                      export PATH="$HOME/.cargo/bin:$PATH"; \
-                      \
-                      # Initialize uv project and install dependencies \
-                      echo "Setting up Python environment with uv..."; \
-                      retry_operation uv init --no-readme --no-git; \
-                      retry_operation uv add --dev --all-extras; \
-                      \
-                      # Install PyTorch CPU version (lightweight for Bedrock usage) \
-                      echo "Installing PyTorch CPU version..."; \
-                      retry_operation uv add torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu; \
-                      \
-                      # Sync the environment \
-                      echo "Syncing Python environment..."; \
-                      retry_operation uv sync; \
-                      \
-                      # Verify installation \
-                      echo "Verifying uv installation..."; \
-                      uv --version; \
-                      echo "Python packages installed:"; \
-                      uv pip list
+                  # Initialize uv project and install dependencies
+                  RUN uv init --no-readme --no-git && \
+                      uv add --dev --all-extras && \
+                      uv sync
                   
-                  # Copy built frontend
-                  COPY --chown=$UID:$GID --from=build /app/build /app/build
-                  COPY --chown=$UID:$GID --from=build /app/CHANGELOG.md /app/CHANGELOG.md
-                  COPY --chown=$UID:$GID --from=build /app/package.json /app/package.json
+                  # Create data directory
+                  RUN mkdir -p /app/data
                   
-                  # Create data directory and set permissions
-                  RUN mkdir -p /app/backend/data && \
-                      chown -R $UID:$GID /app/backend/data
-                  
-                  # Health check optimized for ECS
-                  HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-                    CMD curl --silent --fail http://localhost:${PORT:-8080}/health | jq -ne 'input.status == true' || exit 1
-                  
+                  # Expose port
                   EXPOSE 8080
                   
-                  USER $UID:$GID
+                  # Health check
+                  HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+                    CMD curl --silent --fail http://localhost:8080/health || exit 1
                   
-                  # Use uv to run the application (recommended by Open WebUI)
-                  CMD [ "uv", "run", "python", "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080"]
+                  # Run the application
+                  CMD ["uv", "run", "python", "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080"]
                   EOF
-                - echo Building ECS-optimized Open WebUI image...
+                - echo Building simple Open WebUI image...
                 - |
                   # Build with retry logic to handle Docker Hub rate limits
                   MAX_RETRIES=3
@@ -455,7 +338,7 @@ Resources:
                   
                   while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
                     echo "Build attempt $((RETRY_COUNT + 1)) of $MAX_RETRIES"
-                    if docker build -f Dockerfile.ecs-optimized -t $REPOSITORY_URI:latest --build-arg BUILD_HASH=$COMMIT_HASH .; then
+                    if docker build -f Dockerfile.simple -t $REPOSITORY_URI:latest --build-arg BUILD_HASH=$COMMIT_HASH .; then
                       echo "Build completed successfully"
                       break
                     else
@@ -470,7 +353,7 @@ Resources:
                     fi
                   done
                 - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:$IMAGE_TAG_COMMIT
-                - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:ecs-optimized
+                - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:simple
                 - echo Build completed successfully
             post_build:
               commands:
@@ -508,7 +391,7 @@ Resources:
                   # Push all images with retry
                   push_with_retry $REPOSITORY_URI:latest
                   push_with_retry $REPOSITORY_URI:$IMAGE_TAG_COMMIT
-                  push_with_retry $REPOSITORY_URI:ecs-optimized
+                  push_with_retry $REPOSITORY_URI:simple
                 - echo "All images pushed successfully"
                 - echo "Image URI:" $REPOSITORY_URI:latest
                 - printf '[{"name":"open-webui","imageUri":"%s"}]' $REPOSITORY_URI:latest > imagedefinitions.json
