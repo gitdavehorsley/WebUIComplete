@@ -1,0 +1,428 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CodeBuild project to build Open WebUI Docker image optimized for ECS with Bedrock integration'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: open-webui-bedrock
+    Description: Name for the CodeBuild project and ECR repository
+    
+  GitHubRepoUrl:
+    Type: String
+    Default: https://github.com/open-webui/open-webui.git
+    Description: GitHub repository URL for Open WebUI
+    
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: Git branch to build from
+    
+  ECRRepositoryName:
+    Type: String
+    Default: open-webui-bedrock
+    Description: Name for the ECR repository
+    
+  BuildComputeType:
+    Type: String
+    Default: BUILD_GENERAL1_LARGE
+    AllowedValues:
+      - BUILD_GENERAL1_SMALL
+      - BUILD_GENERAL1_MEDIUM
+      - BUILD_GENERAL1_LARGE
+      - BUILD_GENERAL1_2XLARGE
+    Description: CodeBuild compute type (recommend LARGE for faster builds)
+    
+  AutoTriggerBuild:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Whether to automatically trigger builds on code changes
+
+Resources:
+  # ================================
+  # ECR Repository
+  # ================================
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref ECRRepositoryName
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 10 production images",
+                "selection": {
+                  "tagStatus": "tagged",
+                  "tagPrefixList": ["v", "release"],
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              },
+              {
+                "rulePriority": 2,
+                "description": "Keep last 5 latest/main images",
+                "selection": {
+                  "tagStatus": "tagged",
+                  "tagPrefixList": ["latest", "main"],
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 5
+                },
+                "action": {
+                  "type": "expire"
+                }
+              },
+              {
+                "rulePriority": 3,
+                "description": "Delete untagged images older than 1 day",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 1
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-ecr"
+        - Key: Purpose
+          Value: Open WebUI for Bedrock
+
+  # ================================
+  # CodeBuild IAM Role
+  # ================================
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-codebuild-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildLogsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ProjectName}*"
+        - PolicyName: ECRAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                Resource: !GetAtt ECRRepository.Arn
+        - PolicyName: S3CachePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                Resource: !Sub "${BuildCacheBucket}/*"
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Sub "${BuildCacheBucket}"
+
+  # ================================
+  # S3 Bucket for Build Cache
+  # ================================
+  BuildCacheBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectName}-build-cache-${AWS::AccountId}-${AWS::Region}"
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldCacheFiles
+            Status: Enabled
+            ExpirationInDays: 30
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-build-cache"
+        - Key: Purpose
+          Value: CodeBuild cache storage
+
+  # ================================
+  # CodeBuild Project
+  # ================================
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Ref ProjectName
+      Description: Build Open WebUI Docker image optimized for ECS and Bedrock
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: !Ref BuildComputeType
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+          - Name: IMAGE_REPO_NAME
+            Value: !Ref ECRRepositoryName
+          - Name: IMAGE_TAG
+            Value: latest
+      Source:
+        Type: GITHUB
+        Location: !Ref GitHubRepoUrl
+        GitCloneDepth: 1
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - echo Logging in to Amazon ECR...
+                - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+                - REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
+                - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+                - IMAGE_TAG_COMMIT=${COMMIT_HASH:=latest}
+                - echo Repository URI is $REPOSITORY_URI
+                - echo Commit hash is $COMMIT_HASH
+            build:
+              commands:
+                - echo Build started on `date`
+                - echo Creating optimized Dockerfile for ECS/Bedrock...
+                - |
+                  cat > Dockerfile.ecs-optimized << 'EOF'
+                  # Multi-stage build optimized for ECS and Bedrock
+                  FROM --platform=$BUILDPLATFORM node:22-alpine3.20 AS build
+                  ARG BUILD_HASH=ecs-build
+                  
+                  WORKDIR /app
+                  RUN apk add --no-cache git
+                  
+                  # Copy package files and install dependencies
+                  COPY package.json package-lock.json ./
+                  RUN npm ci --force --only=production
+                  
+                  # Copy source and build frontend
+                  COPY . .
+                  ENV APP_BUILD_VERSION=${BUILD_HASH}
+                  RUN npm run build
+                  
+                  # ================================
+                  # Production stage - ECS optimized
+                  # ================================
+                  FROM python:3.11-slim-bookworm AS production
+                  
+                  # Build args
+                  ARG BUILD_HASH=ecs-build
+                  ARG UID=0
+                  ARG GID=0
+                  
+                  # Environment variables optimized for ECS
+                  ENV ENV=prod \
+                      PORT=8080 \
+                      PYTHONUNBUFFERED=1 \
+                      PYTHONDONTWRITEBYTECODE=1 \
+                      SCARF_NO_ANALYTICS=true \
+                      DO_NOT_TRACK=true \
+                      ANONYMIZED_TELEMETRY=false \
+                      DOCKER=true \
+                      WEBUI_BUILD_VERSION=${BUILD_HASH}
+                  
+                  # ECS-specific configurations
+                  ENV OPENAI_API_BASE_URL="" \
+                      OPENAI_API_KEY="" \
+                      WEBUI_SECRET_KEY="" \
+                      WEBUI_AUTH=true \
+                      ENABLE_SIGNUP=true \
+                      ENABLE_OPENAI_API=true
+                  
+                  # Skip all ML models for Bedrock usage
+                  ENV RAG_EMBEDDING_MODEL="" \
+                      RAG_RERANKING_MODEL="" \
+                      WHISPER_MODEL="" \
+                      SENTENCE_TRANSFORMERS_HOME="/tmp" \
+                      HF_HOME="/tmp" \
+                      TIKTOKEN_CACHE_DIR="/tmp"
+                  
+                  WORKDIR /app/backend
+                  
+                  # Create user if not root
+                  RUN if [ $UID -ne 0 ]; then \
+                      adduser --uid $UID --disabled-password --no-create-home app; \
+                      fi
+                  
+                  # Install system dependencies (minimal for web app only)
+                  RUN apt-get update && \
+                      apt-get install -y --no-install-recommends \
+                      git \
+                      build-essential \
+                      pandoc \
+                      netcat-openbsd \
+                      curl \
+                      jq \
+                      gcc \
+                      python3-dev && \
+                      rm -rf /var/lib/apt/lists/*
+                  
+                  # Copy and install Python dependencies
+                  COPY --chown=$UID:$GID ./backend/requirements.txt ./requirements.txt
+                  
+                  # Install Python packages (skip ML models)
+                  RUN pip3 install --no-cache-dir uv && \
+                      pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir && \
+                      uv pip install --system -r requirements.txt --no-cache-dir
+                  
+                  # Copy built frontend
+                  COPY --chown=$UID:$GID --from=build /app/build /app/build
+                  COPY --chown=$UID:$GID --from=build /app/CHANGELOG.md /app/CHANGELOG.md
+                  COPY --chown=$UID:$GID --from=build /app/package.json /app/package.json
+                  
+                  # Copy backend source
+                  COPY --chown=$UID:$GID ./backend .
+                  
+                  # Create data directory and set permissions
+                  RUN mkdir -p /app/backend/data && \
+                      chown -R $UID:$GID /app/backend/data
+                  
+                  # Health check optimized for ECS
+                  HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+                    CMD curl --silent --fail http://localhost:${PORT:-8080}/health | jq -ne 'input.status == true' || exit 1
+                  
+                  EXPOSE 8080
+                  
+                  USER $UID:$GID
+                  
+                  CMD [ "bash", "start.sh"]
+                  EOF
+                - echo Building ECS-optimized Open WebUI image...
+                - docker build -f Dockerfile.ecs-optimized -t $REPOSITORY_URI:latest --build-arg BUILD_HASH=$COMMIT_HASH .
+                - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:$IMAGE_TAG_COMMIT
+                - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:ecs-optimized
+                - echo Build completed successfully
+            post_build:
+              commands:
+                - echo Build completed on `date`
+                - echo Pushing Docker images to ECR...
+                - docker push $REPOSITORY_URI:latest
+                - docker push $REPOSITORY_URI:$IMAGE_TAG_COMMIT  
+                - docker push $REPOSITORY_URI:ecs-optimized
+                - echo Image pushed successfully
+                - echo "Image URI:" $REPOSITORY_URI:latest
+                - printf '[{"name":"open-webui","imageUri":"%s"}]' $REPOSITORY_URI:latest > imagedefinitions.json
+          artifacts:
+            files:
+              - imagedefinitions.json
+          cache:
+            paths:
+              - '/root/.cache/pip/**/*'
+              - 'node_modules/**/*'
+      Cache:
+        Type: S3
+        Location: !Sub "${BuildCacheBucket}/cache"
+      TimeoutInMinutes: 60
+      Tags:
+        - Key: Name
+          Value: !Ref ProjectName
+        - Key: Purpose
+          Value: Open WebUI for Bedrock
+
+  # ================================
+  # Webhook for GitHub (Optional)
+  # ================================
+  GitHubWebhook:
+    Type: AWS::CodeBuild::SourceCredential
+    Condition: EnableAutoTrigger
+    Properties:
+      Token: !Ref GitHubPersonalAccessToken
+      ServerType: GITHUB
+      AuthType: PERSONAL_ACCESS_TOKEN
+
+  # ================================
+  # CloudWatch Log Group
+  # ================================
+  CodeBuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/codebuild/${ProjectName}"
+      RetentionInDays: 14
+
+Conditions:
+  EnableAutoTrigger: !Equals [!Ref AutoTriggerBuild, 'true']
+
+# ================================
+# Outputs
+# ================================
+Outputs:
+  ECRRepositoryURI:
+    Description: ECR Repository URI for the Open WebUI image
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}"
+    Export:
+      Name: !Sub "${ProjectName}-ecr-uri"
+      
+  ECRRepositoryName:
+    Description: ECR Repository Name
+    Value: !Ref ECRRepository
+    Export:
+      Name: !Sub "${ProjectName}-ecr-name"
+      
+  CodeBuildProjectName:
+    Description: CodeBuild Project Name
+    Value: !Ref CodeBuildProject
+    Export:
+      Name: !Sub "${ProjectName}-codebuild"
+      
+  CodeBuildProjectArn:
+    Description: CodeBuild Project ARN
+    Value: !GetAtt CodeBuildProject.Arn
+    Export:
+      Name: !Sub "${ProjectName}-codebuild-arn"
+      
+  BuildCacheBucket:
+    Description: S3 Bucket used for build caching
+    Value: !Ref BuildCacheBucket
+    Export:
+      Name: !Sub "${ProjectName}-cache-bucket"
+      
+  ImageLatestURI:
+    Description: Latest image URI (use this in ECS task definitions)
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}:latest"
+    Export:
+      Name: !Sub "${ProjectName}-latest-image-uri"
