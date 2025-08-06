@@ -304,6 +304,10 @@ Resources:
                       python-socketio \
                       aiofiles \
                       requests \
+                      typer \
+                      click \
+                      rich \
+                      shellingham \
                       && pip cache purge
                   
                   # Create data directory
