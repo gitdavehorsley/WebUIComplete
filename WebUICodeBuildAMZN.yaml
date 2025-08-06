@@ -273,7 +273,11 @@ Resources:
                       TIKTOKEN_CACHE_DIR="/tmp" \
                       TRANSFORMERS_OFFLINE=1 \
                       HF_DATASETS_OFFLINE=1 \
-                      TOKENIZERS_PARALLELISM=false
+                      TOKENIZERS_PARALLELISM=false \
+                      PIP_NO_DEPS_TORCH=1 \
+                      SKIP_TORCH_INSTALL=1 \
+                      TORCH_HOME="/tmp" \
+                      HUGGINGFACE_HUB_CACHE="/tmp"
                   
                   # Install Python 3.11 and system dependencies with EFS support
                   RUN yum update -y && \
@@ -291,24 +295,10 @@ Resources:
                   # Set working directory
                   WORKDIR /app
                   
-                  # Install Open WebUI with minimal dependencies (no ML extras)
-                  RUN pip install --no-cache-dir --no-deps open-webui && \
-                      pip install --no-cache-dir \
-                      fastapi \
-                      uvicorn \
-                      pydantic \
-                      python-multipart \
-                      python-jose \
-                      passlib \
-                      bcrypt \
-                      python-socketio \
-                      aiofiles \
-                      requests \
-                      typer \
-                      click \
-                      rich \
-                      shellingham \
-                      && pip cache purge
+                  # Install Open WebUI with all dependencies but skip heavy ML packages
+                  # Environment variables are set above to disable ML model downloads
+                  RUN pip install --no-cache-dir open-webui && \
+                      pip cache purge
                   
                   # Create data directory
                   RUN mkdir -p /app/data
