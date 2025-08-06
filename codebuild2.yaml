@@ -177,11 +177,8 @@ Resources:
                   - s3:GetObject
                   - s3:GetObjectVersion
                   - s3:PutObject
-                Resource: !Sub "${BuildCacheBucket}/*"
-              - Effect: Allow
-                Action:
                   - s3:ListBucket
-                Resource: !Sub "${BuildCacheBucket}"
+                Resource: "*"
 
   # ================================
   # CodeBuild Project
