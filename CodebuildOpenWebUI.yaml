@@ -6,7 +6,7 @@ Parameters:
     Type: String
     Default: open-webui-bedrock
     Description: Name for the CodeBuild project and ECR repository (lowercase letters, numbers, and hyphens only)
-    AllowedPattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
+    AllowedPattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]
     
   BuildComputeType:
     Type: String
@@ -121,7 +121,7 @@ Resources:
                   - ecr:InitiateLayerUpload
                   - ecr:UploadLayerPart
                   - ecr:CompleteLayerUpload
-                Resource: !GetAtt ECRRepository.Arn
+                Resource: !Sub "${ECRRepository.RepositoryArn}"
         - PolicyName: S3CachePolicy
           PolicyDocument:
             Version: '2012-10-17'
@@ -143,7 +143,9 @@ Resources:
   BuildCacheBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "${ProjectName}-build-cache-${AWS::AccountId}-${AWS::Region}"
+      BucketName: !Sub 
+        - "${LowerProjectName}-build-cache-${AWS::AccountId}-${AWS::Region}"
+        - LowerProjectName: !Ref ProjectName
       VersioningConfiguration:
         Status: Enabled
       LifecycleConfiguration:
@@ -285,9 +287,12 @@ Resources:
                   # Copy and install Python dependencies
                   COPY --chown=$UID:$GID ./backend/requirements.txt ./requirements.txt
                   
+                  # Install uv (recommended package manager)
+                  RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+                  ENV PATH="/root/.cargo/bin:$PATH"
+                  
                   # Install Python packages (skip ML models)
-                  RUN pip3 install --no-cache-dir uv && \
-                      pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir && \
+                  RUN pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir && \
                       uv pip install --system -r requirements.txt --no-cache-dir
                   
                   # Copy built frontend
@@ -684,9 +689,12 @@ Resources:
                   # Copy and install Python dependencies
                   COPY --chown=$UID:$GID ./backend/requirements.txt ./requirements.txt
                   
+                  # Install uv (recommended package manager)
+                  RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+                  ENV PATH="/root/.cargo/bin:$PATH"
+                  
                   # Install Python packages (skip ML models)
-                  RUN pip3 install --no-cache-dir uv && \
-                      pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir && \
+                  RUN pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir && \
                       uv pip install --system -r requirements.txt --no-cache-dir
                   
                   # Copy built frontend
@@ -1076,9 +1084,12 @@ Resources:
                   # Copy and install Python dependencies
                   COPY --chown=$UID:$GID ./backend/requirements.txt ./requirements.txt
                   
+                  # Install uv (recommended package manager)
+                  RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+                  ENV PATH="/root/.cargo/bin:$PATH"
+                  
                   # Install Python packages (skip ML models)
-                  RUN pip3 install --no-cache-dir uv && \
-                      pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir && \
+                  RUN pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir && \
                       uv pip install --system -r requirements.txt --no-cache-dir
                   
                   # Copy built frontend
@@ -1464,9 +1475,12 @@ Resources:
                   # Copy and install Python dependencies
                   COPY --chown=$UID:$GID ./backend/requirements.txt ./requirements.txt
                   
+                  # Install uv (recommended package manager)
+                  RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+                  ENV PATH="/root/.cargo/bin:$PATH"
+                  
                   # Install Python packages (skip ML models)
-                  RUN pip3 install --no-cache-dir uv && \
-                      pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir && \
+                  RUN pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir && \
                       uv pip install --system -r requirements.txt --no-cache-dir
                   
                   # Copy built frontend
