@@ -229,6 +229,11 @@ Resources:
           phases:
             pre_build:
               commands:
+                - echo "Starting pre-build phase..."
+                - echo "System information:"
+                - uname -a
+                - df -h
+                - free -h
                 - echo Logging in to Amazon ECR...
                 - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
                 - |
@@ -244,10 +249,16 @@ Resources:
                 - IMAGE_TAG_COMMIT=${COMMIT_HASH:=latest}
                 - echo Repository URI is $REPOSITORY_URI
                 - echo Commit hash is $COMMIT_HASH
+                - echo "Docker system info:"
+                - docker system info
+                - echo "Cleaning up Docker system..."
+                - docker system prune -f
             build:
               commands:
-                - echo Build started on `date`
-                - echo Creating optimized Dockerfile for ECS/Bedrock...
+                - echo "Build started on $(date)"
+                - echo "Available disk space:"
+                - df -h
+                - echo "Creating optimized Dockerfile for ECS/Bedrock..."
                 - |
                   cat > Dockerfile.ecs-optimized << 'EOF'
                   # Multi-stage build optimized for ECS and Bedrock
@@ -311,31 +322,93 @@ Resources:
                       adduser --uid $UID --disabled-password --no-create-home app; \
                       fi
                   
-                  # Install system dependencies (minimal for web app only)
-                  RUN apt-get update && \
-                      apt-get install -y --no-install-recommends \
-                      git \
-                      build-essential \
-                      pandoc \
-                      netcat-openbsd \
-                      curl \
-                      jq \
-                      gcc \
-                      python3-dev \
-                      nfs-common && \
-                      # Install amazon-efs-utils for EFS mounting \
-                      curl -o /tmp/amazon-efs-utils.deb https://github.com/aws/efs-utils/releases/latest/download/amazon-efs-utils_1.35.0_all.deb && \
-                      apt-get install -y /tmp/amazon-efs-utils.deb && \
-                      rm /tmp/amazon-efs-utils.deb && \
+                  # Install system dependencies with robust error handling and retry logic
+                  RUN set -e; \
+                      # Function to retry apt operations \
+                      retry_apt() { \
+                        local max_attempts=3; \
+                        local attempt=1; \
+                        while [ $attempt -le $max_attempts ]; do \
+                          echo "Attempt $attempt of $max_attempts"; \
+                          if "$@"; then \
+                            return 0; \
+                          else \
+                            echo "Attempt $attempt failed, cleaning cache and retrying..."; \
+                            apt-get clean; \
+                            rm -rf /var/lib/apt/lists/*; \
+                            if [ $attempt -lt $max_attempts ]; then \
+                              sleep 10; \
+                            fi; \
+                            attempt=$((attempt + 1)); \
+                          fi; \
+                        done; \
+                        echo "All attempts failed"; \
+                        return 1; \
+                      }; \
+                      \
+                      # Clean any existing package cache and lists \
+                      apt-get clean; \
+                      rm -rf /var/lib/apt/lists/*; \
+                      \
+                      # Update package lists with retry \
+                      retry_apt apt-get update; \
+                      \
+                      # Install packages with retry \
+                      retry_apt apt-get install -y --no-install-recommends \
+                        git \
+                        build-essential \
+                        pandoc \
+                        netcat-openbsd \
+                        curl \
+                        jq \
+                        gcc \
+                        python3-dev \
+                        nfs-common \
+                        ca-certificates \
+                        gnupg \
+                        lsb-release; \
+                      \
+                      # Install amazon-efs-utils for EFS mounting with retry \
+                      retry_apt sh -c 'curl -o /tmp/amazon-efs-utils.deb https://github.com/aws/efs-utils/releases/latest/download/amazon-efs-utils_1.35.0_all.deb && apt-get install -y /tmp/amazon-efs-utils.deb'; \
+                      \
+                      # Clean up \
+                      rm -f /tmp/amazon-efs-utils.deb; \
+                      apt-get clean; \
                       rm -rf /var/lib/apt/lists/*
                   
                   # Copy and install Python dependencies
                   COPY --chown=$UID:$GID ./backend/requirements.txt ./requirements.txt
                   
-                  # Install Python packages (skip heavy ML models for Bedrock-only usage)
-                  RUN pip3 install --no-cache-dir uv && \
-                      pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir && \
-                      uv pip install --system -r requirements.txt --no-cache-dir
+                  # Install Python packages with retry logic (skip heavy ML models for Bedrock-only usage)
+                  RUN set -e; \
+                      # Function to retry pip operations \
+                      retry_pip() { \
+                        local max_attempts=3; \
+                        local attempt=1; \
+                        while [ $attempt -le $max_attempts ]; do \
+                          echo "Pip attempt $attempt of $max_attempts"; \
+                          if "$@"; then \
+                            return 0; \
+                          else \
+                            echo "Pip attempt $attempt failed, retrying in 10 seconds..."; \
+                            if [ $attempt -lt $max_attempts ]; then \
+                              sleep 10; \
+                            fi; \
+                            attempt=$((attempt + 1)); \
+                          fi; \
+                        done; \
+                        echo "All pip attempts failed"; \
+                        return 1; \
+                      }; \
+                      \
+                      # Install uv with retry \
+                      retry_pip pip3 install --no-cache-dir uv; \
+                      \
+                      # Install PyTorch with retry \
+                      retry_pip pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir; \
+                      \
+                      # Install requirements with retry \
+                      retry_pip uv pip install --system -r requirements.txt --no-cache-dir
                   
                   # Copy built frontend
                   COPY --chown=$UID:$GID --from=build /app/build /app/build
@@ -386,14 +459,46 @@ Resources:
                 - echo Build completed successfully
             post_build:
               commands:
-                - echo Build completed on `date`
-                - echo Pushing Docker images to ECR...
-                - docker push $REPOSITORY_URI:latest
-                - docker push $REPOSITORY_URI:$IMAGE_TAG_COMMIT  
-                - docker push $REPOSITORY_URI:ecs-optimized
-                - echo Image pushed successfully
+                - echo "Build completed on $(date)"
+                - echo "Final disk space usage:"
+                - df -h
+                - echo "Docker images:"
+                - docker images
+                - echo "Pushing Docker images to ECR..."
+                - |
+                  # Push with retry logic
+                  push_with_retry() {
+                    local image=$1
+                    local max_attempts=3
+                    local attempt=1
+                    
+                    while [ $attempt -le $max_attempts ]; do
+                      echo "Pushing $image (attempt $attempt of $max_attempts)..."
+                      if docker push "$image"; then
+                        echo "Successfully pushed $image"
+                        return 0
+                      else
+                        echo "Failed to push $image (attempt $attempt)"
+                        if [ $attempt -lt $max_attempts ]; then
+                          echo "Retrying in 30 seconds..."
+                          sleep 30
+                        fi
+                        attempt=$((attempt + 1))
+                      fi
+                    done
+                    echo "Failed to push $image after $max_attempts attempts"
+                    return 1
+                  }
+                  
+                  # Push all images with retry
+                  push_with_retry $REPOSITORY_URI:latest
+                  push_with_retry $REPOSITORY_URI:$IMAGE_TAG_COMMIT
+                  push_with_retry $REPOSITORY_URI:ecs-optimized
+                - echo "All images pushed successfully"
                 - echo "Image URI:" $REPOSITORY_URI:latest
                 - printf '[{"name":"open-webui","imageUri":"%s"}]' $REPOSITORY_URI:latest > imagedefinitions.json
+                - echo "Cleaning up Docker system..."
+                - docker system prune -f
           artifacts:
             files:
               - imagedefinitions.json
