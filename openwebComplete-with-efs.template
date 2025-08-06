@@ -105,7 +105,7 @@ Parameters:
     
   EFSProvisionedThroughput:
     Type: Number
-    Default: 1024
+    Default: "1024"
     MinValue: 1024
     MaxValue: 1024
     Description: Provisioned throughput in MiB/s (only used if throughput mode is provisioned)
