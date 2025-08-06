@@ -41,6 +41,17 @@ Parameters:
       - BUILD_GENERAL1_LARGE
       - BUILD_GENERAL1_2XLARGE
     Description: CodeBuild compute type (recommend LARGE for faster builds)
+    
+  DockerHubUsername:
+    Type: String
+    Default: ""
+    Description: Docker Hub username (optional, for authenticated pulls to avoid rate limits)
+    
+  DockerHubPassword:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Docker Hub password or access token (optional, for authenticated pulls to avoid rate limits)
 
 Resources:
   # ================================
@@ -205,6 +216,10 @@ Resources:
             Value: !Ref ECRRepositoryName
           - Name: IMAGE_TAG
             Value: latest
+          - Name: DOCKERHUB_USERNAME
+            Value: !Ref DockerHubUsername
+          - Name: DOCKERHUB_PASSWORD
+            Value: !Ref DockerHubPassword
       Source:
         Type: GITHUB
         Location: !Ref GitHubRepoUrl
@@ -216,6 +231,14 @@ Resources:
               commands:
                 - echo Logging in to Amazon ECR...
                 - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+                - |
+                  # Login to Docker Hub if credentials are provided (to avoid rate limits)
+                  if [ ! -z "$DOCKERHUB_USERNAME" ] && [ ! -z "$DOCKERHUB_PASSWORD" ]; then
+                    echo "Logging in to Docker Hub to avoid rate limits..."
+                    echo "$DOCKERHUB_PASSWORD" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin
+                  else
+                    echo "No Docker Hub credentials provided, using unauthenticated pulls (may hit rate limits)"
+                  fi
                 - REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
                 - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
                 - IMAGE_TAG_COMMIT=${COMMIT_HASH:=latest}
@@ -228,7 +251,8 @@ Resources:
                 - |
                   cat > Dockerfile.ecs-optimized << 'EOF'
                   # Multi-stage build optimized for ECS and Bedrock
-                  FROM --platform=$BUILDPLATFORM node:22-alpine3.20 AS build
+                  # Using AWS public ECR images to avoid Docker Hub rate limits
+                  FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/node:22-alpine3.20 AS build
                   ARG BUILD_HASH=ecs-build
                   
                   WORKDIR /app
@@ -246,7 +270,7 @@ Resources:
                   # ================================
                   # Production stage - ECS optimized
                   # ================================
-                  FROM python:3.11-slim-bookworm AS production
+                  FROM public.ecr.aws/docker/library/python:3.11-slim-bookworm AS production
                   
                   # Build args
                   ARG BUILD_HASH=ecs-build
@@ -336,7 +360,27 @@ Resources:
                   CMD [ "bash", "start.sh"]
                   EOF
                 - echo Building ECS-optimized Open WebUI image...
-                - docker build -f Dockerfile.ecs-optimized -t $REPOSITORY_URI:latest --build-arg BUILD_HASH=$COMMIT_HASH .
+                - |
+                  # Build with retry logic to handle Docker Hub rate limits
+                  MAX_RETRIES=3
+                  RETRY_COUNT=0
+                  
+                  while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+                    echo "Build attempt $((RETRY_COUNT + 1)) of $MAX_RETRIES"
+                    if docker build -f Dockerfile.ecs-optimized -t $REPOSITORY_URI:latest --build-arg BUILD_HASH=$COMMIT_HASH .; then
+                      echo "Build completed successfully"
+                      break
+                    else
+                      RETRY_COUNT=$((RETRY_COUNT + 1))
+                      if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                        echo "Build failed, retrying in 30 seconds..."
+                        sleep 30
+                      else
+                        echo "Build failed after $MAX_RETRIES attempts"
+                        exit 1
+                      fi
+                    fi
+                  done
                 - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:$IMAGE_TAG_COMMIT
                 - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:ecs-optimized
                 - echo Build completed successfully
