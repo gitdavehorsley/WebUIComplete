@@ -31,12 +31,6 @@ Parameters:
       - BUILD_GENERAL1_LARGE
       - BUILD_GENERAL1_2XLARGE
     Description: CodeBuild compute type (recommend LARGE for faster builds)
-    
-  AutoTriggerBuild:
-    Type: String
-    Default: 'false'
-    AllowedValues: ['true', 'false']
-    Description: Whether to automatically trigger builds on code changes
 
 Resources:
   # ================================
@@ -365,17 +359,6 @@ Resources:
           Value: Open WebUI for Bedrock
 
   # ================================
-  # Webhook for GitHub (Optional)
-  # ================================
-  GitHubWebhook:
-    Type: AWS::CodeBuild::SourceCredential
-    Condition: EnableAutoTrigger
-    Properties:
-      Token: !Ref GitHubPersonalAccessToken
-      ServerType: GITHUB
-      AuthType: PERSONAL_ACCESS_TOKEN
-
-  # ================================
   # CloudWatch Log Group
   # ================================
   CodeBuildLogGroup:
@@ -383,9 +366,6 @@ Resources:
     Properties:
       LogGroupName: !Sub "/aws/codebuild/${ProjectName}"
       RetentionInDays: 14
-
-Conditions:
-  EnableAutoTrigger: !Equals [!Ref AutoTriggerBuild, 'true']
 
 # ================================
 # Outputs
