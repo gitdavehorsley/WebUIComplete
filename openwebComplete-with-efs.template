@@ -67,9 +67,15 @@ Parameters:
     Default: latest
     Description: Image tag to use for Bedrock Gateway container
     
-  ApiKeySecretArn:
+  ApiKeySecretName:
     Type: String
-    Description: ARN of the AWS Secrets Manager secret containing the API key for Bedrock access
+    Default: !Sub "${ProjectName}-bedrock-api-key"
+    Description: Name for the AWS Secrets Manager secret that will be created to store the API key for Bedrock access
+    
+  ApiKeySecretValue:
+    Type: String
+    NoEcho: true
+    Description: The API key value to be stored in Secrets Manager for Bedrock access
     
   DefaultModelId:
     Type: String
@@ -110,6 +116,26 @@ Conditions:
   IsProvisionedThroughput: !Equals [!Ref EFSThroughputMode, "provisioned"]
 
 Resources:
+
+  # ================================
+  # Secrets Manager
+  # ================================
+  BedrockApiKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Ref ApiKeySecretName
+      Description: !Sub "API key for ${ProjectName} Bedrock access"
+      SecretString: !Sub |
+        {
+          "api_key": "${ApiKeySecretValue}"
+        }
+      Tags:
+        - Key: Name
+          Value: !Ref ApiKeySecretName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
 
   # ================================
   # Security Groups
@@ -358,6 +384,7 @@ Resources:
 
   ECSTaskExecutionRole:
     Type: AWS::IAM::Role
+    DependsOn: BedrockApiKeySecret
     Properties:
       RoleName: !Sub "${ProjectName}-ecs-execution-role"
       AssumeRolePolicyDocument:
@@ -387,7 +414,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - secretsmanager:GetSecretValue
-                Resource: !Ref ApiKeySecretArn
+                Resource: !Ref BedrockApiKeySecret
 
   ECSTaskRole:
     Type: AWS::IAM::Role
@@ -440,6 +467,7 @@ Resources:
       - ECSTaskRole
       - EFSMountTarget1
       - EFSMountTarget2
+      - BedrockApiKeySecret
     Properties:
       Family: !Sub "${ProjectName}-webui-task"
       NetworkMode: awsvpc
@@ -485,7 +513,7 @@ Resources:
               Value: !Sub "${ProjectName}-secret-key"
           Secrets:
             - Name: OPENAI_API_KEY
-              ValueFrom: !Sub "${ApiKeySecretArn}:api_key::"
+              ValueFrom: !Sub "${BedrockApiKeySecret}:api_key::"
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -500,6 +528,7 @@ Resources:
       - ECSTaskRole
       - EFSMountTarget1
       - EFSMountTarget2
+      - BedrockApiKeySecret
     Properties:
       Family: !Sub "${ProjectName}-gateway-task"
       NetworkMode: awsvpc
@@ -547,7 +576,7 @@ Resources:
               Value: "true"
           Secrets:
             - Name: API_KEY
-              ValueFrom: !Sub "${ApiKeySecretArn}:api_key::"
+              ValueFrom: !Sub "${BedrockApiKeySecret}:api_key::"
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -725,5 +754,11 @@ Outputs:
     Value: !GetAtt EFSFileSystem.DNSName
     Export:
       Name: !Sub "${ProjectName}-efs-dns-name"
+
+  BedrockApiKeySecretArn:
+    Description: ARN of the created Secrets Manager secret for Bedrock API key
+    Value: !Ref BedrockApiKeySecret
+    Export:
+      Name: !Sub "${ProjectName}-bedrock-api-key-secret-arn"
 
  
