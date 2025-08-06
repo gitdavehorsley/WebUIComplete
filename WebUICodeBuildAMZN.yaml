@@ -279,14 +279,18 @@ Resources:
                       TORCH_HOME="/tmp" \
                       HUGGINGFACE_HUB_CACHE="/tmp"
                   
-                  # Install Python 3.11 and system dependencies with EFS support and SSM agent
+                  # Install Python 3.11 and system dependencies with EFS support
                   RUN yum update -y && \
                       yum install -y python3.11 python3.11-pip && \
                       yum install -y amazon-efs-utils && \
-                      yum install -y curl wget tar gzip && \
-                      yum install -y amazon-ssm-agent && \
+                      yum install -y curl wget tar gzip sudo && \
                       yum clean all && \
                       rm -rf /var/cache/yum/*
+                  
+                  # Download and install Amazon SSM Agent manually
+                  RUN wget -q https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm && \
+                      yum install -y ./amazon-ssm-agent.rpm && \
+                      rm -f ./amazon-ssm-agent.rpm
                   
                   # Create symlinks for python and pip
                   RUN ln -sf /usr/bin/python3.11 /usr/bin/python3 && \
