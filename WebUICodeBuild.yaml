@@ -269,9 +269,9 @@ Resources:
                   WORKDIR /app
                   RUN apk add --no-cache git
                   
-                  # Copy package files and install dependencies
+                  # Copy package files and install ALL dependencies (including dev dependencies for build)
                   COPY package.json package-lock.json ./
-                  RUN npm ci --force --only=production
+                  RUN npm ci --force
                   
                   # Copy source and build frontend
                   COPY . .
