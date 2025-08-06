@@ -295,9 +295,10 @@ Resources:
                   # Set working directory
                   WORKDIR /app
                   
-                  # Install Open WebUI with all dependencies but skip heavy ML packages
-                  # Environment variables are set above to disable ML model downloads
-                  RUN pip install --no-cache-dir open-webui && \
+                  # Install CPU-only PyTorch first to avoid NVIDIA/CUDA packages
+                  # Then install Open WebUI with minimal ML dependencies
+                  RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu && \
+                      pip install --no-cache-dir open-webui && \
                       pip cache purge
                   
                   # Create data directory
