@@ -121,7 +121,7 @@ Resources:
                   - ecr:InitiateLayerUpload
                   - ecr:UploadLayerPart
                   - ecr:CompleteLayerUpload
-                Resource: !GetAtt ECRRepository.Arn
+                Resource: !Sub "${ECRRepository.RepositoryArn}"
         - PolicyName: S3CachePolicy
           PolicyDocument:
             Version: '2012-10-17'
