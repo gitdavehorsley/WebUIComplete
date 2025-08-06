@@ -163,14 +163,11 @@ Resources:
                   - ecr:GetDownloadUrlForLayer
                   - ecr:BatchGetImage
                   - ecr:GetAuthorizationToken
-                Resource: "*"
-              - Effect: Allow
-                Action:
                   - ecr:PutImage
                   - ecr:InitiateLayerUpload
                   - ecr:UploadLayerPart
                   - ecr:CompleteLayerUpload
-                Resource: !GetAtt ECRRepository.Arn
+                Resource: "*"
         - PolicyName: S3CachePolicy
           PolicyDocument:
             Version: '2012-10-17'
