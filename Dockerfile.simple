@@ -19,17 +19,8 @@ RUN apt-get update && \
 # Set working directory
 WORKDIR /app
 
-# Install uv (recommended by Open WebUI)
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.cargo/bin:$PATH"
-
-# Clone Open WebUI repository
-RUN git clone https://github.com/open-webui/open-webui.git .
-
-# Initialize uv project and install dependencies
-RUN uv init --no-readme --no-git && \
-    uv add --dev --all-extras && \
-    uv sync
+# Install Open WebUI using pip (recommended approach)
+RUN pip install --no-cache-dir open-webui
 
 # Expose port
 EXPOSE 8080
@@ -39,4 +30,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl --silent --fail http://localhost:8080/health || exit 1
 
 # Run the application
-CMD ["uv", "run", "python", "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080"] 
+CMD ["open-webui", "serve", "--host", "0.0.0.0", "--port", "8080"] 
