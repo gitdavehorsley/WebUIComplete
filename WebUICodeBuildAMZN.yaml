@@ -280,10 +280,11 @@ Resources:
                       HUGGINGFACE_HUB_CACHE="/tmp"
                   
                   # Install Python 3.11 and system dependencies with EFS support
+                  # Note: curl is pre-installed in Amazon Linux 2023, so we don't reinstall it
                   RUN yum update -y && \
                       yum install -y python3.11 python3.11-pip && \
                       yum install -y amazon-efs-utils && \
-                      yum install -y curl wget tar gzip sudo && \
+                      yum install -y wget tar gzip sudo && \
                       yum clean all && \
                       rm -rf /var/cache/yum/*
                   
