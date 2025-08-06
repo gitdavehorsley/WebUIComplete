@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'CodeBuild project to build Open WebUI Docker image using simple approach with uv runtime manager'
+Description: 'CodeBuild project to build Open WebUI Docker image using AWS base images with uv runtime manager'
 
 Parameters:
   ProjectName:
@@ -42,16 +42,7 @@ Parameters:
       - BUILD_GENERAL1_2XLARGE
     Description: CodeBuild compute type (recommend LARGE for faster builds)
     
-  DockerHubUsername:
-    Type: String
-    Default: ""
-    Description: Docker Hub username (optional, for authenticated pulls to avoid rate limits)
-    
-  DockerHubPassword:
-    Type: String
-    Default: ""
-    NoEcho: true
-    Description: Docker Hub password or access token (optional, for authenticated pulls to avoid rate limits)
+  # Docker Hub parameters removed - using AWS base images instead
 
 Resources:
   # ================================
@@ -198,7 +189,7 @@ Resources:
     Type: AWS::CodeBuild::Project
     Properties:
       Name: !Ref ProjectName
-      Description: Build Open WebUI Docker image using simple approach with uv runtime manager
+      Description: Build Open WebUI Docker image using AWS base images with uv runtime manager
       ServiceRole: !GetAtt CodeBuildServiceRole.Arn
       Artifacts:
         Type: NO_ARTIFACTS
@@ -216,10 +207,7 @@ Resources:
             Value: !Ref ECRRepositoryName
           - Name: IMAGE_TAG
             Value: latest
-          - Name: DOCKERHUB_USERNAME
-            Value: !Ref DockerHubUsername
-          - Name: DOCKERHUB_PASSWORD
-            Value: !Ref DockerHubPassword
+          # Docker Hub environment variables removed - using AWS base images instead
       Source:
         Type: GITHUB
         Location: !Ref GitHubRepoUrl
@@ -236,14 +224,7 @@ Resources:
                 - free -h
                 - echo Logging in to Amazon ECR...
                 - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
-                - |
-                  # Login to Docker Hub if credentials are provided (to avoid rate limits)
-                  if [ ! -z "$DOCKERHUB_USERNAME" ] && [ ! -z "$DOCKERHUB_PASSWORD" ]; then
-                    echo "Logging in to Docker Hub to avoid rate limits..."
-                    echo "$DOCKERHUB_PASSWORD" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin
-                  else
-                    echo "No Docker Hub credentials provided, using unauthenticated pulls (may hit rate limits)"
-                  fi
+                - echo "Using AWS-provided base images - no Docker Hub authentication needed"
                 - REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
                 - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
                 - IMAGE_TAG_COMMIT=${COMMIT_HASH:=latest}
@@ -263,8 +244,9 @@ Resources:
                   cat > Dockerfile.simple << 'EOF'
                   # Simple Dockerfile for Open WebUI
                   # Based on official Open WebUI installation recommendations
+                  # Using AWS Public ECR base images to avoid Docker Hub rate limits
                   
-                  FROM python:3.11-slim-bookworm
+                  FROM public.ecr.aws/docker/library/python:3.11-slim-bookworm
                   
                   # Set environment variables
                   ENV PYTHONUNBUFFERED=1 \
@@ -331,27 +313,8 @@ Resources:
                   CMD ["uv", "run", "python", "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080"]
                   EOF
                 - echo Building simple Open WebUI image...
-                - |
-                  # Build with retry logic to handle Docker Hub rate limits
-                  MAX_RETRIES=3
-                  RETRY_COUNT=0
-                  
-                  while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-                    echo "Build attempt $((RETRY_COUNT + 1)) of $MAX_RETRIES"
-                    if docker build -f Dockerfile.simple -t $REPOSITORY_URI:latest --build-arg BUILD_HASH=$COMMIT_HASH .; then
-                      echo "Build completed successfully"
-                      break
-                    else
-                      RETRY_COUNT=$((RETRY_COUNT + 1))
-                      if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-                        echo "Build failed, retrying in 30 seconds..."
-                        sleep 30
-                      else
-                        echo "Build failed after $MAX_RETRIES attempts"
-                        exit 1
-                      fi
-                    fi
-                  done
+                - echo "Building Open WebUI image using AWS base images..."
+                - docker build -f Dockerfile.simple -t $REPOSITORY_URI:latest --build-arg BUILD_HASH=$COMMIT_HASH .
                 - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:$IMAGE_TAG_COMMIT
                 - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:simple
                 - echo Build completed successfully
@@ -363,35 +326,9 @@ Resources:
                 - echo "Docker images:"
                 - docker images
                 - echo "Pushing Docker images to ECR..."
-                - |
-                  # Push with retry logic
-                  push_with_retry() {
-                    local image=$1
-                    local max_attempts=3
-                    local attempt=1
-                    
-                    while [ $attempt -le $max_attempts ]; do
-                      echo "Pushing $image (attempt $attempt of $max_attempts)..."
-                      if docker push "$image"; then
-                        echo "Successfully pushed $image"
-                        return 0
-                      else
-                        echo "Failed to push $image (attempt $attempt)"
-                        if [ $attempt -lt $max_attempts ]; then
-                          echo "Retrying in 30 seconds..."
-                          sleep 30
-                        fi
-                        attempt=$((attempt + 1))
-                      fi
-                    done
-                    echo "Failed to push $image after $max_attempts attempts"
-                    return 1
-                  }
-                  
-                  # Push all images with retry
-                  push_with_retry $REPOSITORY_URI:latest
-                  push_with_retry $REPOSITORY_URI:$IMAGE_TAG_COMMIT
-                  push_with_retry $REPOSITORY_URI:simple
+                - docker push $REPOSITORY_URI:latest
+                - docker push $REPOSITORY_URI:$IMAGE_TAG_COMMIT
+                - docker push $REPOSITORY_URI:simple
                 - echo "All images pushed successfully"
                 - echo "Image URI:" $REPOSITORY_URI:latest
                 - printf '[{"name":"open-webui","imageUri":"%s"}]' $REPOSITORY_URI:latest > imagedefinitions.json
