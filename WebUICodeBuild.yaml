@@ -282,7 +282,16 @@ Resources:
                   RUN apt-get update && \
                       apt-get install -y --no-install-recommends \
                       curl \
-                      amazon-efs-utils \
+                      git \
+                      stunnel4 \
+                      && git clone https://github.com/aws/efs-utils /tmp/efs-utils \
+                      && cd /tmp/efs-utils \
+                      && ./build-deb.sh \
+                      && apt-get install -y ./build/amazon-efs-utils*deb \
+                      && cd / \
+                      && rm -rf /tmp/efs-utils \
+                      && apt-get remove -y git \
+                      && apt-get autoremove -y \
                       && rm -rf /var/lib/apt/lists/* \
                       && apt-get clean \
                       && rm -rf /tmp/* /var/tmp/*
