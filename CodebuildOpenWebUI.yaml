@@ -6,7 +6,7 @@ Parameters:
     Type: String
     Default: open-webui-bedrock
     Description: Name for the CodeBuild project and ECR repository (lowercase letters, numbers, and hyphens only)
-    AllowedPattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]
+    AllowedPattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
     
   BuildComputeType:
     Type: String
@@ -121,7 +121,7 @@ Resources:
                   - ecr:InitiateLayerUpload
                   - ecr:UploadLayerPart
                   - ecr:CompleteLayerUpload
-                Resource: !Sub "${ECRRepository.RepositoryArn}"
+                Resource: !GetAtt ECRRepository.Arn
         - PolicyName: S3CachePolicy
           PolicyDocument:
             Version: '2012-10-17'
@@ -143,9 +143,7 @@ Resources:
   BuildCacheBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub 
-        - "${LowerProjectName}-build-cache-${AWS::AccountId}-${AWS::Region}"
-        - LowerProjectName: !Ref ProjectName
+      BucketName: !Sub "${ProjectName}-build-cache-${AWS::AccountId}-${AWS::Region}"
       VersioningConfiguration:
         Status: Enabled
       LifecycleConfiguration:
