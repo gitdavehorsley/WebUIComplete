@@ -1,0 +1,418 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CodeBuild project to build minimal Open WebUI Docker image using Amazon Linux base image with simple EFS utils installation'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: open-webui-amzn
+    Description: Name for the CodeBuild project and ECR repository (lowercase letters, numbers, and hyphens only)
+    AllowedPattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
+    ConstraintDescription: Must contain only lowercase letters, numbers, and hyphens. Must start and end with alphanumeric characters.
+    MinLength: 2
+    MaxLength: 63
+    
+  ECRRepositoryName:
+    Type: String
+    Default: open-webui-amzn
+    Description: Name for the ECR repository (lowercase letters, numbers, and hyphens only)
+    AllowedPattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]+$'
+    ConstraintDescription: Must contain only lowercase letters, numbers, and hyphens. Must start and end with alphanumeric characters.
+    MinLength: 2
+    MaxLength: 256
+    
+  GitHubRepoUrl:
+    Type: String
+    Default: https://github.com/open-webui/open-webui.git
+    Description: GitHub repository URL for Open WebUI
+    
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: Git branch to build from
+    AllowedPattern: '^[a-zA-Z0-9._/-]+$'
+    ConstraintDescription: Must be a valid Git branch name
+    
+  BuildComputeType:
+    Type: String
+    Default: BUILD_GENERAL1_LARGE
+    AllowedValues:
+      - BUILD_GENERAL1_SMALL
+      - BUILD_GENERAL1_MEDIUM
+      - BUILD_GENERAL1_LARGE
+      - BUILD_GENERAL1_2XLARGE
+    Description: CodeBuild compute type (recommend LARGE for faster builds)
+
+Resources:
+  # ================================
+  # ECR Repository
+  # ================================
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref ECRRepositoryName
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 10 production images",
+                "selection": {
+                  "tagStatus": "tagged",
+                  "tagPrefixList": ["v", "release"],
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              },
+              {
+                "rulePriority": 2,
+                "description": "Keep last 5 latest/main images",
+                "selection": {
+                  "tagStatus": "tagged",
+                  "tagPrefixList": ["latest", "main"],
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 5
+                },
+                "action": {
+                  "type": "expire"
+                }
+              },
+              {
+                "rulePriority": 3,
+                "description": "Delete untagged images older than 1 day",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 1
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-ecr"
+        - Key: Purpose
+          Value: Open WebUI for Bedrock
+
+  # ================================
+  # S3 Bucket for Build Cache
+  # ================================
+  BuildCacheBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectName}-build-cache-${AWS::AccountId}-${AWS::Region}"
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldCacheFiles
+            Status: Enabled
+            ExpirationInDays: 30
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-build-cache"
+        - Key: Purpose
+          Value: CodeBuild cache storage
+
+  # ================================
+  # CodeBuild IAM Role
+  # ================================
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-codebuild-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildLogsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ProjectName}*"
+        - PolicyName: ECRAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:GetAuthorizationToken
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                Resource: "*"
+        - PolicyName: S3CachePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource: "*"
+
+  # ================================
+  # CodeBuild Project
+  # ================================
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Ref ProjectName
+      Description: Build minimal Open WebUI Docker image using Amazon Linux base image with simple EFS utils installation
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: !Ref BuildComputeType
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+          - Name: IMAGE_REPO_NAME
+            Value: !Ref ECRRepositoryName
+          - Name: IMAGE_TAG
+            Value: latest
+      Source:
+        Type: GITHUB
+        Location: !Ref GitHubRepoUrl
+        GitCloneDepth: 1
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - echo "Starting pre-build phase..."
+                - echo "System information:"
+                - uname -a
+                - df -h
+                - free -h
+                - echo Logging in to Amazon ECR...
+                - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+                - echo "Using AWS-provided base images - no Docker Hub authentication needed"
+                - REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
+                - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+                - IMAGE_TAG_COMMIT=${COMMIT_HASH:=latest}
+                - echo Repository URI is $REPOSITORY_URI
+                - echo Commit hash is $COMMIT_HASH
+                - echo "Docker system info:"
+                - docker system info
+                - echo "Cleaning up Docker system..."
+                - docker system prune -f
+            build:
+              commands:
+                - echo "Build started on $(date)"
+                - echo "Available disk space:"
+                - df -h
+                - echo "Creating Amazon Linux Dockerfile for Open WebUI..."
+                - |
+                  cat > Dockerfile.amzn << 'EOF'
+                  # Minimal Dockerfile for Open WebUI using Amazon Linux
+                  # Optimized for Bedrock usage with minimal image size and simple EFS utils installation
+                  # Using AWS Public ECR Amazon Linux base image
+                  
+                  FROM public.ecr.aws/amazonlinux/amazonlinux:2023
+                  
+                  # Set environment variables for minimal installation
+                  ENV PYTHONUNBUFFERED=1 \
+                      PYTHONDONTWRITEBYTECODE=1 \
+                      PORT=8080 \
+                      ENV=prod \
+                      SCARF_NO_ANALYTICS=true \
+                      DO_NOT_TRACK=true \
+                      ANONYMIZED_TELEMETRY=false \
+                      DOCKER=true \
+                      WEBUI_BUILD_VERSION=${BUILD_HASH:-amzn-build}
+                  
+                  # ECS-specific configurations
+                  ENV OPENAI_API_BASE_URL="" \
+                      OPENAI_API_KEY="" \
+                      WEBUI_SECRET_KEY="" \
+                      WEBUI_AUTH=true \
+                      ENABLE_SIGNUP=true \
+                      ENABLE_OPENAI_API=true
+                  
+                  # Disable all ML models and heavy dependencies for minimal installation
+                  ENV RAG_EMBEDDING_MODEL="" \
+                      RAG_RERANKING_MODEL="" \
+                      WHISPER_MODEL="" \
+                      SENTENCE_TRANSFORMERS_HOME="/tmp" \
+                      HF_HOME="/tmp" \
+                      TIKTOKEN_CACHE_DIR="/tmp" \
+                      TRANSFORMERS_OFFLINE=1 \
+                      HF_DATASETS_OFFLINE=1 \
+                      TOKENIZERS_PARALLELISM=false
+                  
+                  # Install Python 3.11 and system dependencies with EFS support
+                  RUN yum update -y && \
+                      yum install -y python3.11 python3.11-pip && \
+                      yum install -y amazon-efs-utils && \
+                      yum clean all && \
+                      rm -rf /var/cache/yum/*
+                  
+                  # Create symlinks for python and pip
+                  RUN ln -sf /usr/bin/python3.11 /usr/bin/python3 && \
+                      ln -sf /usr/bin/python3.11 /usr/bin/python && \
+                      ln -sf /usr/bin/pip3.11 /usr/bin/pip3 && \
+                      ln -sf /usr/bin/pip3.11 /usr/bin/pip
+                  
+                  # Set working directory
+                  WORKDIR /app
+                  
+                  # Install Open WebUI with minimal dependencies (no ML extras)
+                  RUN pip install --no-cache-dir --no-deps open-webui && \
+                      pip install --no-cache-dir \
+                      fastapi \
+                      uvicorn \
+                      pydantic \
+                      python-multipart \
+                      python-jose \
+                      passlib \
+                      bcrypt \
+                      python-socketio \
+                      aiofiles \
+                      requests \
+                      && pip cache purge
+                  
+                  # Create data directory
+                  RUN mkdir -p /app/data
+                  
+                  # Expose port
+                  EXPOSE 8080
+                  
+                  # Health check
+                  HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+                    CMD curl --silent --fail http://localhost:8080/health || exit 1
+                  
+                  # Run the application
+                  CMD ["open-webui", "serve", "--host", "0.0.0.0", "--port", "8080"]
+                  EOF
+                - echo Building Amazon Linux Open WebUI image...
+                - echo "Building Open WebUI image using Amazon Linux base image..."
+                - docker build -f Dockerfile.amzn -t $REPOSITORY_URI:latest --build-arg BUILD_HASH=$COMMIT_HASH .
+                - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:$IMAGE_TAG_COMMIT
+                - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:amzn
+                - echo Build completed successfully
+            post_build:
+              commands:
+                - echo "Build completed on $(date)"
+                - echo "Final disk space usage:"
+                - df -h
+                - echo "Docker images:"
+                - docker images
+                - echo "Pushing Docker images to ECR..."
+                - docker push $REPOSITORY_URI:latest
+                - docker push $REPOSITORY_URI:$IMAGE_TAG_COMMIT
+                - docker push $REPOSITORY_URI:amzn
+                - echo "All images pushed successfully"
+                - echo "Image URI:" $REPOSITORY_URI:latest
+                - printf '[{"name":"open-webui","imageUri":"%s"}]' $REPOSITORY_URI:latest > imagedefinitions.json
+                - echo "Cleaning up Docker system..."
+                - docker system prune -f
+          artifacts:
+            files:
+              - imagedefinitions.json
+          cache:
+            paths:
+              - '/root/.cache/pip/**/*'
+              - 'node_modules/**/*'
+      Cache:
+        Type: S3
+        Location: !Sub "${BuildCacheBucket}/cache"
+      TimeoutInMinutes: 60
+      Tags:
+        - Key: Name
+          Value: !Ref ProjectName
+        - Key: Purpose
+          Value: Open WebUI for Bedrock
+
+  # ================================
+  # CloudWatch Log Group
+  # ================================
+  CodeBuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/codebuild/${ProjectName}"
+      RetentionInDays: 14
+
+# ================================
+# Outputs
+# ================================
+Outputs:
+  ECRRepositoryURI:
+    Description: ECR Repository URI for the Open WebUI image
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}"
+    Export:
+      Name: !Sub "${ProjectName}-ecr-uri"
+      
+  ECRRepositoryName:
+    Description: ECR Repository Name
+    Value: !Ref ECRRepository
+    Export:
+      Name: !Sub "${ProjectName}-ecr-name"
+      
+  CodeBuildProjectName:
+    Description: CodeBuild Project Name
+    Value: !Ref CodeBuildProject
+    Export:
+      Name: !Sub "${ProjectName}-codebuild"
+      
+  CodeBuildProjectArn:
+    Description: CodeBuild Project ARN
+    Value: !GetAtt CodeBuildProject.Arn
+    Export:
+      Name: !Sub "${ProjectName}-codebuild-arn"
+      
+  BuildCacheBucket:
+    Description: S3 Bucket used for build caching
+    Value: !Ref BuildCacheBucket
+    Export:
+      Name: !Sub "${ProjectName}-cache-bucket"
+      
+  ImageLatestURI:
+    Description: Latest image URI (use this in ECS task definitions)
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}:latest"
+    Export:
+      Name: !Sub "${ProjectName}-latest-image-uri"
+
+  # Quick Start Commands Output
+  QuickStartCommands:
+    Description: Commands to manually trigger a build after stack creation
+    Value: !Sub |
+      # To start a build manually:
+      aws codebuild start-build --project-name ${CodeBuildProject} --region ${AWS::Region}
+      
+      # To check build status:
+      aws codebuild batch-get-builds --ids $(aws codebuild list-builds-for-project --project-name ${CodeBuildProject} --query 'ids[0]' --output text --region ${AWS::Region}) --region ${AWS::Region}
