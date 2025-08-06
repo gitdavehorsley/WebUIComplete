@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'CodeBuild project to build Open WebUI Docker image using AWS base images with uv runtime manager'
+Description: 'CodeBuild project to build minimal Open WebUI Docker image using AWS base images without ML dependencies'
 
 Parameters:
   ProjectName:
@@ -189,7 +189,7 @@ Resources:
     Type: AWS::CodeBuild::Project
     Properties:
       Name: !Ref ProjectName
-      Description: Build Open WebUI Docker image using AWS base images with uv runtime manager
+      Description: Build minimal Open WebUI Docker image using AWS base images without ML dependencies
       ServiceRole: !GetAtt CodeBuildServiceRole.Arn
       Artifacts:
         Type: NO_ARTIFACTS
@@ -242,13 +242,13 @@ Resources:
                 - echo "Creating simple Dockerfile for Open WebUI..."
                 - |
                   cat > Dockerfile.simple << 'EOF'
-                  # Simple Dockerfile for Open WebUI
-                  # Based on official Open WebUI installation recommendations
+                  # Minimal Dockerfile for Open WebUI (no ML dependencies)
+                  # Optimized for Bedrock usage with minimal image size
                   # Using AWS Public ECR base images to avoid Docker Hub rate limits
                   
                   FROM public.ecr.aws/docker/library/python:3.11-slim-bookworm
                   
-                  # Set environment variables
+                  # Set environment variables for minimal installation
                   ENV PYTHONUNBUFFERED=1 \
                       PYTHONDONTWRITEBYTECODE=1 \
                       PORT=8080 \
@@ -257,7 +257,7 @@ Resources:
                       DO_NOT_TRACK=true \
                       ANONYMIZED_TELEMETRY=false \
                       DOCKER=true \
-                      WEBUI_BUILD_VERSION=${BUILD_HASH:-simple-build}
+                      WEBUI_BUILD_VERSION=${BUILD_HASH:-minimal-build}
                   
                   # ECS-specific configurations
                   ENV OPENAI_API_BASE_URL="" \
@@ -267,28 +267,42 @@ Resources:
                       ENABLE_SIGNUP=true \
                       ENABLE_OPENAI_API=true
                   
-                  # Skip all ML models for Bedrock usage - lightweight deployment
+                  # Disable all ML models and heavy dependencies for minimal installation
                   ENV RAG_EMBEDDING_MODEL="" \
                       RAG_RERANKING_MODEL="" \
                       WHISPER_MODEL="" \
                       SENTENCE_TRANSFORMERS_HOME="/tmp" \
                       HF_HOME="/tmp" \
-                      TIKTOKEN_CACHE_DIR="/tmp"
+                      TIKTOKEN_CACHE_DIR="/tmp" \
+                      TRANSFORMERS_OFFLINE=1 \
+                      HF_DATASETS_OFFLINE=1 \
+                      TOKENIZERS_PARALLELISM=false
                   
-                  # Install system dependencies
+                  # Install minimal system dependencies only
                   RUN apt-get update && \
                       apt-get install -y --no-install-recommends \
-                      git \
                       curl \
-                      build-essential \
-                      jq \
-                      && rm -rf /var/lib/apt/lists/*
+                      && rm -rf /var/lib/apt/lists/* \
+                      && apt-get clean \
+                      && rm -rf /tmp/* /var/tmp/*
                   
                   # Set working directory
                   WORKDIR /app
                   
-                  # Install Open WebUI using pip (recommended approach)
-                  RUN pip install --no-cache-dir open-webui
+                  # Install Open WebUI with minimal dependencies (no ML extras)
+                  RUN pip install --no-cache-dir --no-deps open-webui && \
+                      pip install --no-cache-dir \
+                      fastapi \
+                      uvicorn \
+                      pydantic \
+                      python-multipart \
+                      python-jose \
+                      passlib \
+                      bcrypt \
+                      python-socketio \
+                      aiofiles \
+                      requests \
+                      && pip cache purge
                   
                   # Create data directory
                   RUN mkdir -p /app/data
