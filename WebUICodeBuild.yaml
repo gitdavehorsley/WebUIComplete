@@ -376,47 +376,61 @@ Resources:
                       apt-get clean; \
                       rm -rf /var/lib/apt/lists/*
                   
-                  # Copy and install Python dependencies
-                  COPY --chown=$UID:$GID ./backend/requirements.txt ./requirements.txt
+                  # Copy backend source and requirements
+                  COPY --chown=$UID:$GID ./backend .
                   
-                  # Install Python packages with retry logic (skip heavy ML models for Bedrock-only usage)
+                  # Install uv runtime manager (recommended by Open WebUI)
                   RUN set -e; \
-                      # Function to retry pip operations \
-                      retry_pip() { \
+                      # Function to retry operations \
+                      retry_operation() { \
                         local max_attempts=3; \
                         local attempt=1; \
                         while [ $attempt -le $max_attempts ]; do \
-                          echo "Pip attempt $attempt of $max_attempts"; \
+                          echo "Attempt $attempt of $max_attempts"; \
                           if "$@"; then \
                             return 0; \
                           else \
-                            echo "Pip attempt $attempt failed, retrying in 10 seconds..."; \
+                            echo "Attempt $attempt failed, retrying in 10 seconds..."; \
                             if [ $attempt -lt $max_attempts ]; then \
                               sleep 10; \
                             fi; \
                             attempt=$((attempt + 1)); \
                           fi; \
                         done; \
-                        echo "All pip attempts failed"; \
+                        echo "All attempts failed"; \
                         return 1; \
                       }; \
                       \
-                      # Install uv with retry \
-                      retry_pip pip3 install --no-cache-dir uv; \
+                      # Install uv using the official installer \
+                      echo "Installing uv runtime manager..."; \
+                      retry_operation curl -LsSf https://astral.sh/uv/install.sh | sh; \
                       \
-                      # Install PyTorch with retry \
-                      retry_pip pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir; \
+                      # Add uv to PATH \
+                      export PATH="$HOME/.cargo/bin:$PATH"; \
                       \
-                      # Install requirements with retry \
-                      retry_pip uv pip install --system -r requirements.txt --no-cache-dir
+                      # Initialize uv project and install dependencies \
+                      echo "Setting up Python environment with uv..."; \
+                      retry_operation uv init --no-readme --no-git; \
+                      retry_operation uv add --dev --all-extras; \
+                      \
+                      # Install PyTorch CPU version (lightweight for Bedrock usage) \
+                      echo "Installing PyTorch CPU version..."; \
+                      retry_operation uv add torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu; \
+                      \
+                      # Sync the environment \
+                      echo "Syncing Python environment..."; \
+                      retry_operation uv sync; \
+                      \
+                      # Verify installation \
+                      echo "Verifying uv installation..."; \
+                      uv --version; \
+                      echo "Python packages installed:"; \
+                      uv pip list
                   
                   # Copy built frontend
                   COPY --chown=$UID:$GID --from=build /app/build /app/build
                   COPY --chown=$UID:$GID --from=build /app/CHANGELOG.md /app/CHANGELOG.md
                   COPY --chown=$UID:$GID --from=build /app/package.json /app/package.json
-                  
-                  # Copy backend source
-                  COPY --chown=$UID:$GID ./backend .
                   
                   # Create data directory and set permissions
                   RUN mkdir -p /app/backend/data && \
@@ -430,7 +444,8 @@ Resources:
                   
                   USER $UID:$GID
                   
-                  CMD [ "bash", "start.sh"]
+                  # Use uv to run the application (recommended by Open WebUI)
+                  CMD [ "uv", "run", "python", "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080"]
                   EOF
                 - echo Building ECS-optimized Open WebUI image...
                 - |
