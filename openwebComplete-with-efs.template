@@ -526,8 +526,6 @@ Resources:
     DependsOn: 
       - ECSTaskExecutionRole
       - ECSTaskRole
-      - EFSMountTarget1
-      - EFSMountTarget2
       - BedrockApiKeySecret
     Properties:
       Family: !Sub "${ProjectName}-gateway-task"
@@ -541,12 +539,6 @@ Resources:
       Memory: 2048
       ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
       TaskRoleArn: !GetAtt ECSTaskRole.Arn
-      Volumes:
-        - Name: gateway-storage
-          EfsVolumeConfiguration:
-            FileSystemId: !Ref EFSFileSystem
-            TransitEncryption: ENABLED
-            TransitEncryptionPort: 2049
       ContainerDefinitions:
         - Name: bedrock-gateway
           Image: !Sub "${BedrockGatewayRepositoryURI}:${BedrockGatewayImageTag}"
