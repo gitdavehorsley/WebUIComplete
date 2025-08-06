@@ -285,6 +285,7 @@ Resources:
                       yum install -y python3.11 python3.11-pip && \
                       yum install -y amazon-efs-utils && \
                       yum install -y wget tar gzip sudo && \
+                      yum install -y net-tools iproute bind-utils && \
                       yum clean all && \
                       rm -rf /var/cache/yum/*
                   
@@ -314,14 +315,60 @@ Resources:
                       mkdir -p /var/lib/amazon/ssm && \
                       mkdir -p /var/log/amazon/ssm
                   
-                  # Create startup script to run both SSM agent and Open WebUI
+                  # Create startup script to run both SSM agent and Open WebUI with network logging
                   RUN echo '#!/bin/bash' > /start.sh && \
                       echo 'set -e' >> /start.sh && \
+                      echo '' >> /start.sh && \
+                      echo '# Function to log network information' >> /start.sh && \
+                      echo 'log_network_info() {' >> /start.sh && \
+                      echo '    echo "=========================="' >> /start.sh && \
+                      echo '    echo "Container Network Information"' >> /start.sh && \
+                      echo '    echo "=========================="' >> /start.sh && \
+                      echo '    echo "Timestamp: $(date)"' >> /start.sh && \
+                      echo '    echo ""' >> /start.sh && \
+                      echo '    echo "Container IP Addresses:"' >> /start.sh && \
+                      echo '    ip addr show | grep -E "inet [0-9]" | awk "{print \$NF, \$2}" || echo "Could not determine IP addresses"' >> /start.sh && \
+                      echo '    echo ""' >> /start.sh && \
+                      echo '    echo "Default Gateway:"' >> /start.sh && \
+                      echo '    ip route | grep default | awk "{print \$3}" || echo "Could not determine default gateway"' >> /start.sh && \
+                      echo '    echo ""' >> /start.sh && \
+                      echo '    echo "DNS Servers:"' >> /start.sh && \
+                      echo '    if [ -f /etc/resolv.conf ]; then' >> /start.sh && \
+                      echo '        grep nameserver /etc/resolv.conf | awk "{print \$2}" || echo "No nameservers found"' >> /start.sh && \
+                      echo '    else' >> /start.sh && \
+                      echo '        echo "/etc/resolv.conf not found"' >> /start.sh && \
+                      echo '    fi' >> /start.sh && \
+                      echo '    echo ""' >> /start.sh && \
+                      echo '    echo "Network Interfaces:"' >> /start.sh && \
+                      echo '    ip link show | grep -E "^[0-9]+:" | awk -F: "{print \$2}" | sed "s/^ //" || echo "Could not list interfaces"' >> /start.sh && \
+                      echo '    echo ""' >> /start.sh && \
+                      echo '    echo "Routing Table:"' >> /start.sh && \
+                      echo '    ip route || echo "Could not display routing table"' >> /start.sh && \
+                      echo '    echo "=========================="' >> /start.sh && \
+                      echo '    echo ""' >> /start.sh && \
+                      echo '}' >> /start.sh && \
+                      echo '' >> /start.sh && \
+                      echo '# Log network information at startup' >> /start.sh && \
+                      echo 'log_network_info' >> /start.sh && \
+                      echo '' >> /start.sh && \
                       echo '# Start SSM agent in background' >> /start.sh && \
+                      echo 'echo "Starting Amazon SSM Agent..."' >> /start.sh && \
                       echo 'amazon-ssm-agent &' >> /start.sh && \
+                      echo 'SSM_PID=$!' >> /start.sh && \
+                      echo 'echo "SSM Agent started with PID: $SSM_PID"' >> /start.sh && \
+                      echo '' >> /start.sh && \
                       echo '# Wait a moment for SSM agent to start' >> /start.sh && \
-                      echo 'sleep 2' >> /start.sh && \
+                      echo 'sleep 3' >> /start.sh && \
+                      echo '' >> /start.sh && \
+                      echo '# Check if SSM agent is running' >> /start.sh && \
+                      echo 'if ps -p $SSM_PID > /dev/null 2>&1; then' >> /start.sh && \
+                      echo '    echo "SSM Agent is running successfully"' >> /start.sh && \
+                      echo 'else' >> /start.sh && \
+                      echo '    echo "Warning: SSM Agent may not be running properly"' >> /start.sh && \
+                      echo 'fi' >> /start.sh && \
+                      echo '' >> /start.sh && \
                       echo '# Start Open WebUI in foreground' >> /start.sh && \
+                      echo 'echo "Starting Open WebUI on port 8080..."' >> /start.sh && \
                       echo 'exec open-webui serve --host 0.0.0.0 --port 8080' >> /start.sh && \
                       chmod +x /start.sh
                   
