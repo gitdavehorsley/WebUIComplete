@@ -451,6 +451,7 @@ Resources:
           PortMappings:
             - ContainerPort: 8080
               Protocol: tcp
+              Name: open-webui
           Memory: 4096
           MemoryReservation: 3072
           Cpu: 2048
@@ -567,11 +568,6 @@ Resources:
       ServiceConnectConfiguration:
         Enabled: true
         Namespace: !GetAtt ServiceConnectNamespace.Arn
-        Services:
-          - PortName: bedrock-gateway
-            ClientAliases:
-              - Port: 80
-                DnsName: bedrock-gateway
       HealthCheckGracePeriodSeconds: 120
       Tags:
         - Key: Name
@@ -600,6 +596,9 @@ Resources:
         Services:
           - PortName: bedrock-gateway
             DiscoveryName: bedrock-gateway
+            ClientAliases:
+              - Port: 80
+                DnsName: bedrock-gateway
       Tags:
         - Key: Name
           Value: !Sub "${ProjectName}-gateway-service"
