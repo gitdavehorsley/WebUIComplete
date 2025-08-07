@@ -748,7 +748,7 @@ Outputs:
 
   EFSFileSystemDNS:
     Description: EFS File System DNS Name
-    Value: !GetAtt EFSFileSystem.DNSName
+    Value: !Sub "${EFSFileSystem}.efs.${AWS::Region}.amazonaws.com"
     Export:
       Name: !Sub "${ProjectName}-efs-dns-name"
 
