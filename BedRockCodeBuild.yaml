@@ -147,26 +147,14 @@ Resources:
                 - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin 366590864501.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
                 - echo Source image URI - $SOURCE_IMAGE_URI
                 - echo Target repository URI - $TARGET_REPOSITORY_URI
-                - echo Creating custom Dockerfile with tiktoken optimizations...
-                - |
-                  cat > Dockerfile << EOF
-                  # Use the AWS Samples Bedrock Gateway image as base
-                  FROM $SOURCE_IMAGE_URI
-                  
-                  # Pre-download tiktoken encodings during build
-                  RUN python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')" && \\
-                      python -c "import tiktoken; tiktoken.get_encoding('p50k_base')" && \\
-                      python -c "import tiktoken; tiktoken.get_encoding('r50k_base')"
-                  
-                  # Set the default command
-                  CMD ["python", "app.py"]
-                  EOF
             build:
               commands:
                 - echo Build started on `date`
-                - echo Building custom Bedrock Gateway image with tiktoken optimizations...
-                - docker build -t $TARGET_REPOSITORY_URI:$TARGET_IMAGE_TAG .
-                - echo Built custom image as $TARGET_REPOSITORY_URI:$TARGET_IMAGE_TAG
+                - echo Pulling source image...
+                - docker pull $SOURCE_IMAGE_URI
+                - echo Tagging image for target repository...
+                - docker tag $SOURCE_IMAGE_URI $TARGET_REPOSITORY_URI:$TARGET_IMAGE_TAG
+                - echo Tagged as $TARGET_REPOSITORY_URI:$TARGET_IMAGE_TAG
             post_build:
               commands:
                 - echo Build completed on `date`

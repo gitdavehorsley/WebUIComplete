@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  open-webui:
+    build:
+      context: .
+      dockerfile: Dockerfile.simple
+    ports:
+      - "8080:8080"
+    environment:
+      # Basic configuration
+      - WEBUI_SECRET_KEY=your-secret-key-here
+      - WEBUI_AUTH=true
+      - ENABLE_SIGNUP=true
+      
+      # Optional: Configure your API endpoints
+      # - OPENAI_API_BASE_URL=https://api.openai.com/v1
+      # - OPENAI_API_KEY=your-openai-api-key
+      
+      # Optional: For AWS Bedrock integration
+      # - AWS_ACCESS_KEY_ID=your-aws-access-key
+      # - AWS_SECRET_ACCESS_KEY=your-aws-secret-key
+      # - AWS_DEFAULT_REGION=us-east-1
+      
+    volumes:
+      # Optional: Persist data
+      - webui_data:/app/data
+      
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  webui_data: 

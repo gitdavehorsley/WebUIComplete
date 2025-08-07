@@ -6,40 +6,40 @@ Parameters:
     Type: String
     Default: webui-bedrock
     Description: Project name used for resource naming
-
+    
   Environment:
     Type: String
     Default: poc
-    AllowedValues:
+    AllowedValues: 
       - poc
       - dev
       - staging
       - prod
     Description: Environment name
-
+    
   VpcId:
     Type: AWS::EC2::VPC::Id
     Description: Existing VPC ID for deployment
-
+    
   VpcCidr:
     Type: String
     Default: "10.0.0.0/8"
     Description: VPC CIDR block for internal network access and security group rules (found in VPC details, e.g., 10.0.0.0/16)
-
+    
   PrivateSubnetIds:
     Type: List<AWS::EC2::Subnet::Id>
     Description: Existing private subnet IDs for internal ALB and ECS tasks (minimum 2)
-
+    
   AllowedCidrBlocks:
     Type: CommaDelimitedList
     Default: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
     Description: CIDR blocks for future external access control (currently using VpcCidr)
-
+    
   CertificateArn:
     Type: String
     Default: ""
     Description: ACM Certificate ARN for HTTPS (leave empty for HTTP only)
-
+    
   DomainName:
     Type: String
     Default: ""
@@ -51,26 +51,26 @@ Parameters:
   OpenWebUIRepositoryURI:
     Type: String
     Description: Full URI of existing Open WebUI ECR repository (e.g., 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-repo/open-webui)
-
+    
   BedrockGatewayRepositoryURI:
     Type: String
     Default: "366590864501.dkr.ecr.us-east-1.amazonaws.com/bedrock-proxy-api-ecs"
     Description: Full URI of existing Bedrock Gateway ECR repository (defaults to official AWS sample image)
-
+    
   OpenWebUIImageTag:
     Type: String
     Default: latest
     Description: Image tag to use for Open WebUI container
-
+    
   BedrockGatewayImageTag:
     Type: String
     Default: latest
     Description: Image tag to use for Bedrock Gateway container
-
+    
   ApiKeySecretArn:
     Type: String
     Description: ARN of the AWS Secrets Manager secret containing the API key for Bedrock access
-
+    
   DefaultModelId:
     Type: String
     Default: anthropic.claude-3-5-haiku-20241007-v1:0
@@ -147,100 +147,10 @@ Resources:
           ToPort: 53
           CidrIp: 0.0.0.0/0
           Description: DNS resolution (UDP)
-        - IpProtocol: tcp
-          FromPort: 2049
-          ToPort: 2049
-          CidrIp: !Ref VpcCidr
-          Description: NFS access to EFS
       Tags:
         - Key: Name
           Value: !Sub "${ProjectName}-ecs-sg"
 
-  EFSSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    DependsOn: ECSSecurityGroup
-    Properties:
-      GroupName: !Sub "${ProjectName}-efs-sg"
-      GroupDescription: Security group for EFS file system
-      VpcId: !Ref VpcId
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 2049
-          ToPort: 2049
-          SourceSecurityGroupId: !Ref ECSSecurityGroup
-          Description: NFS access from ECS tasks
-      Tags:
-        - Key: Name
-          Value: !Sub "${ProjectName}-efs-sg"
-
-  # ================================
-  # EFS File System and Mount Targets
-  # ================================
-  EFSFileSystem:
-    Type: AWS::EFS::FileSystem
-    Properties:
-      FileSystemName: !Sub "${ProjectName}-efs"
-      PerformanceMode: generalPurpose
-      ThroughputMode: bursting
-      Encrypted: true
-      LifecyclePolicies:
-        - TransitionToIA: AFTER_30_DAYS
-      Tags:
-        - Key: Name
-          Value: !Sub "${ProjectName}-efs"
-
-  EFSMountTarget1:
-    Type: AWS::EFS::MountTarget
-    Properties:
-      FileSystemId: !Ref EFSFileSystem
-      SubnetId: !Select [0, !Ref PrivateSubnetIds]
-      SecurityGroups:
-        - !Ref EFSSecurityGroup
-
-  EFSMountTarget2:
-    Type: AWS::EFS::MountTarget
-    Properties:
-      FileSystemId: !Ref EFSFileSystem
-      SubnetId: !Select [1, !Ref PrivateSubnetIds]
-      SecurityGroups:
-        - !Ref EFSSecurityGroup
-
-  # ================================
-  # EFS Access Points
-  # ================================
-  EFSWebUIAccessPoint:
-    Type: AWS::EFS::AccessPoint
-    Properties:
-      FileSystemId: !Ref EFSFileSystem
-      AccessPointTag:
-        - Key: Name
-          Value: !Sub "${ProjectName}-webui-access-point"
-      PosixUser:
-        Uid: "1000"
-        Gid: "1000"
-      RootDirectory:
-        Path: "/webui"
-        CreationInfo:
-          OwnerUid: "1000"
-          OwnerGid: "1000"
-          Permissions: "755"
-
-  EFSGatewayAccessPoint:
-    Type: AWS::EFS::AccessPoint
-    Properties:
-      FileSystemId: !Ref EFSFileSystem
-      AccessPointTag:
-        - Key: Name
-          Value: !Sub "${ProjectName}-gateway-access-point"
-      PosixUser:
-        Uid: "1000"
-        Gid: "1000"
-      RootDirectory:
-        Path: "/gateway"
-        CreationInfo:
-          OwnerUid: "1000"
-          OwnerGid: "1000"
-          Permissions: "755"
   # ================================
   # Application Load Balancer (Internal)
   # ================================
@@ -705,27 +615,3 @@ Outputs:
     Value: !Ref BedrockGatewayRepositoryURI
     Export:
       Name: !Sub "${ProjectName}-gateway-repo-uri"
-
-  EFSFileSystemId:
-    Description: EFS File System ID
-    Value: !Ref EFSFileSystem
-    Export:
-      Name: !Sub "${ProjectName}-efs-filesystem-id"
-
-  EFSFileSystemDNS:
-    Description: EFS File System DNS Name
-    Value: !GetAtt EFSFileSystem.DNSName
-    Export:
-      Name: !Sub "${ProjectName}-efs-dns-name"
-
-  EFSWebUIAccessPointId:
-    Description: EFS WebUI Access Point ID
-    Value: !Ref EFSWebUIAccessPoint
-    Export:
-      Name: !Sub "${ProjectName}-webui-access-point-id"
-
-  EFSGatewayAccessPointId:
-    Description: EFS Gateway Access Point ID
-    Value: !Ref EFSGatewayAccessPoint
-    Export:
-      Name: !Sub "${ProjectName}-gateway-access-point-id"
