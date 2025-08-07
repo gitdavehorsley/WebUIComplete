@@ -202,6 +202,11 @@ Resources:
           ToPort: 53
           CidrIp: 0.0.0.0/0
           Description: DNS resolution (UDP)
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          CidrIp: !Ref VpcCidr
+          Description: NFS access to EFS file system
       Tags:
         - Key: Name
           Value: !Sub "${ProjectName}-ecs-sg"
