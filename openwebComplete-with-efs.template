@@ -283,7 +283,7 @@ Resources:
   ALBTargetGroupWebUI:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      Name: !Sub "${ProjectName}-webui-tg"
+      Name: !Sub "${ProjectName}-ui"
       Port: 8080
       Protocol: HTTP
       VpcId: !Ref VpcId
@@ -299,12 +299,12 @@ Resources:
         HttpCode: "200"
       Tags:
         - Key: Name
-          Value: !Sub "${ProjectName}-webui-tg"
+          Value: !Sub "${ProjectName}-ui"
 
   ALBTargetGroupGateway:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      Name: !Sub "${ProjectName}-gateway-tg"
+      Name: !Sub "${ProjectName}-gw"
       Port: 80
       Protocol: HTTP
       VpcId: !Ref VpcId
@@ -320,7 +320,7 @@ Resources:
         HttpCode: "200"
       Tags:
         - Key: Name
-          Value: !Sub "${ProjectName}-gateway-tg"
+          Value: !Sub "${ProjectName}-gw"
 
   ALBListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
