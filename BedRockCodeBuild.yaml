@@ -149,13 +149,13 @@ Resources:
                 - echo Target repository URI - $TARGET_REPOSITORY_URI
                 - echo Creating custom Dockerfile with tiktoken optimizations...
                 - |
-                  cat > Dockerfile << 'EOF'
+                  cat > Dockerfile << EOF
                   # Use the AWS Samples Bedrock Gateway image as base
                   FROM $SOURCE_IMAGE_URI
                   
                   # Pre-download tiktoken encodings during build
-                  RUN python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')" && \
-                      python -c "import tiktoken; tiktoken.get_encoding('p50k_base')" && \
+                  RUN python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')" && \\
+                      python -c "import tiktoken; tiktoken.get_encoding('p50k_base')" && \\
                       python -c "import tiktoken; tiktoken.get_encoding('r50k_base')"
                   
                   # Set the default command
