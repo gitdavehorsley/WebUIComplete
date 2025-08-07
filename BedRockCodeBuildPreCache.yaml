@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'CodeBuild project for building Bedrock Gateway Docker image with tiktoken caching'
+Description: 'CodeBuild project for building Bedrock Gateway Docker image with local tiktoken caching'
 
 Parameters:
   ProjectName:
@@ -42,47 +42,11 @@ Parameters:
       - "true"
       - "false"
     Description: Enable multi-architecture build (amd64 + arm64)
-    
-  TiktokenCacheBucket:
-    Type: String
-    Default: ""
-    Description: S3 bucket name for tiktoken cache storage (leave empty to create new bucket)
 
 Conditions:
-  CreateTiktokenBucket: !Equals [!Ref TiktokenCacheBucket, ""]
   IsMultiArch: !Equals [!Ref EnableMultiArch, "true"]
 
 Resources:
-  # ================================
-  # S3 Bucket for Tiktoken Cache
-  # ================================
-  TiktokenCacheBucketResource:
-    Type: AWS::S3::Bucket
-    Condition: CreateTiktokenBucket
-    Properties:
-      BucketName: !Sub "${ProjectName}-tiktoken-cache-${AWS::AccountId}"
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      VersioningConfiguration:
-        Status: Enabled
-      LifecycleConfiguration:
-        Rules:
-          - Id: DeleteOldVersions
-            Status: Enabled
-            NoncurrentVersionExpirationInDays: 30
-      Tags:
-        - Key: Name
-          Value: !Sub "${ProjectName}-tiktoken-cache"
-        - Key: Purpose
-          Value: Tiktoken cache storage for CodeBuild
-
   # ================================
   # ECR Repository
   # ================================
@@ -100,22 +64,9 @@ Resources:
                 "rulePriority": 1,
                 "description": "Keep last 10 images",
                 "selection": {
-                  "tagStatus": "tagged",
+                  "tagStatus": "any",
                   "countType": "imageCountMoreThan",
                   "countNumber": 10
-                },
-                "action": {
-                  "type": "expire"
-                }
-              },
-              {
-                "rulePriority": 2,
-                "description": "Delete untagged images older than 1 day",
-                "selection": {
-                  "tagStatus": "untagged",
-                  "countType": "sinceImagePushed",
-                  "countUnit": "days",
-                  "countNumber": 1
                 },
                 "action": {
                   "type": "expire"
@@ -123,17 +74,13 @@ Resources:
               }
             ]
           }
-      Tags:
-        - Key: Name
-          Value: !Sub "${ProjectName}-ecr-repo"
 
   # ================================
-  # IAM Role for CodeBuild
+  # CodeBuild Service Role
   # ================================
   CodeBuildServiceRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "${ProjectName}-codebuild-role"
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -142,9 +89,10 @@ Resources:
               Service: codebuild.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonECR-FullAccess
         - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
       Policies:
-        - PolicyName: ECRAccess
+        - PolicyName: CodeBuildECRPolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
@@ -154,107 +102,74 @@ Resources:
                   - ecr:BatchCheckLayerAvailability
                   - ecr:GetDownloadUrlForLayer
                   - ecr:BatchGetImage
-                  - ecr:BatchImportLayerExists
-                  - ecr:BatchUploadLayerPart
-                  - ecr:CompleteLayerUpload
                   - ecr:InitiateLayerUpload
-                  - ecr:PutImage
                   - ecr:UploadLayerPart
-                Resource: "*"
-        - PolicyName: S3Access
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:PutObject
-                  - s3:DeleteObject
-                  - s3:ListBucket
-                Resource:
-                  - !Sub 
-                    - "${BucketArn}/*"
-                    - BucketArn: !If 
-                      - CreateTiktokenBucket
-                      - !GetAtt TiktokenCacheBucketResource.Arn
-                      - !Sub "arn:aws:s3:::${TiktokenCacheBucket}"
-                  - !If 
-                    - CreateTiktokenBucket
-                    - !GetAtt TiktokenCacheBucketResource.Arn
-                    - !Sub "arn:aws:s3:::${TiktokenCacheBucket}"
-
-  # ================================
-  # CloudWatch Log Group
-  # ================================
-  CodeBuildLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/aws/codebuild/${ProjectName}"
-      RetentionInDays: 14
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                Resource: '*'
 
   # ================================
   # CodeBuild Project
   # ================================
   CodeBuildProject:
     Type: AWS::CodeBuild::Project
-    DependsOn: 
-      - CodeBuildServiceRole
-      - ECRRepository
     Properties:
       Name: !Ref ProjectName
-      Description: !Sub "Build Bedrock Gateway Docker image for ${ECRRepositoryName}"
+      Description: !Sub "Build Bedrock Gateway Docker image with optimized tiktoken caching"
       ServiceRole: !GetAtt CodeBuildServiceRole.Arn
       Artifacts:
         Type: NO_ARTIFACTS
       Environment:
         Type: LINUX_CONTAINER
-        ComputeType: BUILD_GENERAL1_LARGE
-        Image: aws/codebuild/standard:7.0
+        ComputeType: BUILD_GENERAL1_MEDIUM
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
         PrivilegedMode: true
         EnvironmentVariables:
-          - Name: AWS_DEFAULT_REGION
-            Value: !Ref AWS::Region
-          - Name: AWS_ACCOUNT_ID
-            Value: !Ref AWS::AccountId
-          - Name: IMAGE_REPO_NAME
-            Value: !Ref ECRRepositoryName
+          - Name: REPOSITORY_URI
+            Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepositoryName}"
           - Name: IMAGE_TAG
             Value: !Ref ImageTag
           - Name: BUILD_ARCH
             Value: !Ref BuildArch
           - Name: ENABLE_MULTI_ARCH
             Value: !Ref EnableMultiArch
-          - Name: TIKTOKEN_CACHE_BUCKET
-            Value: !If 
-              - CreateTiktokenBucket
-              - !Ref TiktokenCacheBucketResource
-              - !Ref TiktokenCacheBucket
       Source:
         Type: GITHUB
         Location: !Ref GitHubRepoUrl
-        GitCloneDepth: 1
         BuildSpec: |
           version: 0.2
           phases:
             pre_build:
               commands:
                 - echo Logging in to Amazon ECR...
-                - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
-                - REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
-                - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
-                - IMAGE_TAG_COMMIT=${IMAGE_TAG}-${COMMIT_HASH}
+                - aws --version
+                - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $REPOSITORY_URI
+                - REPOSITORY_URI=$REPOSITORY_URI
+                - IMAGE_TAG=$IMAGE_TAG
+                - IMAGE_TAG_COMMIT=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+                - echo "Building image: $REPOSITORY_URI:$IMAGE_TAG"
+                - echo "Commit tag: $REPOSITORY_URI:$IMAGE_TAG_COMMIT"
                 - |
-                  # Setup Docker buildx for multi-arch builds if enabled
                   if [ "$ENABLE_MULTI_ARCH" = "true" ]; then
-                    docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+                    echo "Setting up multi-architecture build..."
                     docker buildx create --name multiarch-builder --use
                     docker buildx inspect --bootstrap
                   fi
                 - |
-                  # Download tiktoken cache from S3 if it exists
-                  echo "Checking for existing tiktoken cache..."
+                  # Pre-download tiktoken encodings locally for faster builds
+                  echo "Pre-downloading tiktoken encodings..."
                   mkdir -p /tmp/tiktoken_cache
-                  aws s3 sync s3://$TIKTOKEN_CACHE_BUCKET/tiktoken/ /tmp/tiktoken_cache/ || echo "No existing tiktoken cache found"
+                  python3 -c "
+                  import tiktoken
+                  encodings = ['cl100k_base', 'p50k_base', 'r50k_base']
+                  for enc in encodings:
+                      try:
+                          tiktoken.get_encoding(enc)
+                          print(f'Cached {enc} encoding')
+                      except Exception as e:
+                          print(f'Warning: Could not cache {enc}: {e}')
+                  print('Tiktoken pre-download complete')
+                  "
             build:
               commands:
                 - echo Build started on `date`
@@ -274,7 +189,6 @@ Resources:
                   else
                     # Single architecture build
                     echo "Building single architecture image for $BUILD_ARCH..."
-                    # Pre-download tiktoken data during build
                     docker build \
                       --platform $BUILD_ARCH \
                       --build-arg TIKTOKEN_CACHE_DIR=/app/tiktoken_cache \
@@ -287,21 +201,9 @@ Resources:
                     docker push $REPOSITORY_URI:$IMAGE_TAG
                     docker push $REPOSITORY_URI:$IMAGE_TAG_COMMIT
                   fi
-                - |
-                  # Extract tiktoken cache from built image
-                  echo "Extracting tiktoken cache from built image..."
-                  TEMP_CONTAINER=$(docker create $REPOSITORY_URI:$IMAGE_TAG)
-                  docker cp $TEMP_CONTAINER:/app/tiktoken_cache /tmp/extracted_tiktoken_cache || echo "No tiktoken cache found in container"
-                  docker rm $TEMP_CONTAINER
             post_build:
               commands:
                 - echo Build completed on `date`
-                - |
-                  # Upload tiktoken cache to S3 for future builds
-                  if [ -d "/tmp/extracted_tiktoken_cache" ]; then
-                    echo "Uploading tiktoken cache to S3..."
-                    aws s3 sync /tmp/extracted_tiktoken_cache/ s3://$TIKTOKEN_CACHE_BUCKET/tiktoken/
-                  fi
                 - echo Pushing the Docker image...
                 - echo "Image pushed to $REPOSITORY_URI:$IMAGE_TAG"
                 - echo "Image also tagged as $REPOSITORY_URI:$IMAGE_TAG_COMMIT"
@@ -318,7 +220,7 @@ Resources:
     Type: AWS::CodeBuild::Project
     Properties:
       Name: !Sub "${ProjectName}-dockerfile-generator"
-      Description: "Generate optimized Dockerfile with tiktoken caching"
+      Description: "Generate optimized Dockerfile with local tiktoken caching"
       ServiceRole: !GetAtt CodeBuildServiceRole.Arn
       Artifacts:
         Type: NO_ARTIFACTS
@@ -349,7 +251,7 @@ Resources:
                   COPY ./requirements.txt /app/requirements.txt
 
                   # Install Python dependencies
-                  RUN pip install --no-cache-dir --upgrade -r /app/requirements.txt
+                  RUN pip install --no-cache-dir -r requirements.txt
 
                   # Create tiktoken cache directory
                   ARG TIKTOKEN_CACHE_DIR=/app/tiktoken_cache
@@ -358,69 +260,59 @@ Resources:
 
                   # Pre-download tiktoken encodings during build
                   RUN python -c "import tiktoken; \
-                      encodings = ['cl100k_base', 'p50k_base', 'r50k_base', 'gpt2']; \
+                      encodings = ['cl100k_base', 'p50k_base', 'r50k_base']; \
                       [tiktoken.get_encoding(enc) for enc in encodings]; \
                       print('Tiktoken encodings cached successfully')"
 
                   # Copy application code
-                  COPY ./api /app/api
+                  COPY . /app/
 
                   # Set environment variables
-                  ENV PORT=80
                   ENV PYTHONPATH=/app
                   ENV TIKTOKEN_CACHE_DIR=${TIKTOKEN_CACHE_DIR}
 
+                  # Expose port
+                  EXPOSE 8080
+
                   # Health check
-                  HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-                    CMD curl -f http://localhost:${PORT}/health || exit 1
+                  HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+                    CMD curl -f http://localhost:8080/health || exit 1
 
                   # Run the application
-                  CMD ["sh", "-c", "uvicorn api.app:app --host 0.0.0.0 --port ${PORT}"]
+                  CMD ["python", "app.py"]
                   EOF
-                - echo "Optimized Dockerfile generated at /tmp/Dockerfile_ecs_optimized"
-      TimeoutInMinutes: 5
+                - echo "Optimized Dockerfile generated successfully"
+                - echo "This Dockerfile includes local tiktoken caching for faster builds"
+      TimeoutInMinutes: 10
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-dockerfile-generator"
 
-# ================================
-# Outputs
-# ================================
 Outputs:
   CodeBuildProjectName:
     Description: Name of the CodeBuild project
     Value: !Ref CodeBuildProject
     Export:
-      Name: !Sub "${ProjectName}-codebuild-name"
+      Name: !Sub "${AWS::StackName}-CodeBuildProject"
+
+  ECRRepositoryName:
+    Description: Name of the ECR repository
+    Value: !Ref ECRRepository
+    Export:
+      Name: !Sub "${AWS::StackName}-ECRRepository"
 
   ECRRepositoryURI:
     Description: URI of the ECR repository
-    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}"
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepositoryName}"
     Export:
-      Name: !Sub "${ProjectName}-ecr-uri"
+      Name: !Sub "${AWS::StackName}-ECRRepositoryURI"
 
-  ECRRepositoryArn:
-    Description: ARN of the ECR repository
-    Value: !GetAtt ECRRepository.Arn
+  DockerfileGeneratorProject:
+    Description: Name of the Dockerfile generator project
+    Value: !Ref TiktokenOptimizedDockerfile
     Export:
-      Name: !Sub "${ProjectName}-ecr-arn"
-
-  TiktokenCacheBucket:
-    Description: S3 bucket used for tiktoken cache
-    Value: !If 
-      - CreateTiktokenBucket
-      - !Ref TiktokenCacheBucketResource
-      - !Ref TiktokenCacheBucket
-    Export:
-      Name: !Sub "${ProjectName}-tiktoken-bucket"
-
-  CodeBuildServiceRoleArn:
-    Description: ARN of the CodeBuild service role
-    Value: !GetAtt CodeBuildServiceRole.Arn
-    Export:
-      Name: !Sub "${ProjectName}-codebuild-role-arn"
-
-  BuildCommand:
-    Description: Command to trigger the CodeBuild project
-    Value: !Sub "aws codebuild start-build --project-name ${CodeBuildProject}"
+      Name: !Sub "${AWS::StackName}-DockerfileGenerator"
 
   OptimizedDockerfileInfo:
     Description: Information about the tiktoken-optimized Dockerfile
-    Value: "Use the generated optimized Dockerfile for better tiktoken caching performance"
+    Value: "Use the generated optimized Dockerfile for better local tiktoken caching performance"
